@@ -103,9 +103,7 @@ where
                 left,
                 operator,
                 right,
-            } => {
-                todo!()
-            }
+            } => self.interpret_logical_expr(left, operator, right),
             Expr::Unary { .. } => {
                 todo!()
             }
@@ -230,13 +228,20 @@ mod test {
 
     #[test]
     fn test_expression_statements() {
-        let mut scanner = Scanner::new("print 1 + 2;");
-        let tokens = scanner.scan_tokens().unwrap();
+        let tests = [
+            ("print (1 + 2) * 5;", "15\n"),
+            ("print false or true;", "true\n"),
+        ];
 
-        let mut parser = Parser::new(&tokens);
-        let mut output: Vec<u8> = Vec::new();
-        let mut interpreter = Interpreter::new(&mut output);
-        interpreter.interpret(&parser.parse().unwrap()).unwrap();
-        assert_eq!("3\n".as_bytes(), &output);
+        for (src, expected) in tests {
+            let mut scanner = Scanner::new(src);
+            let tokens = scanner.scan_tokens().unwrap();
+
+            let mut parser = Parser::new(&tokens);
+            let mut output: Vec<u8> = Vec::new();
+            let mut interpreter = Interpreter::new(&mut output);
+            interpreter.interpret(&parser.parse().unwrap()).unwrap();
+            assert_eq!(expected.as_bytes(), &output);
+        }
     }
 }

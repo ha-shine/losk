@@ -412,7 +412,6 @@ mod test {
                     Expr::variable(token!(Identifier, "foo")),
                 )),
             ),
-            // TODO: Nested grouping
             // logical expression
             (
                 "true and false;", // logical or expressions
@@ -420,6 +419,23 @@ mod test {
                     Expr::literal(true),
                     token!(And, "and"),
                     Expr::literal(false),
+                )),
+            ),
+            // nested grouping
+            (
+                "((1 + 2) / 4) * 10;",
+                Stmt::expression(Expr::binary(
+                    Expr::grouping(Expr::binary(
+                        Expr::grouping(Expr::binary(
+                            Expr::literal(1),
+                            token!(Plus, "+"),
+                            Expr::literal(2),
+                        )),
+                        token!(Slash, "/"),
+                        Expr::literal(4),
+                    )),
+                    token!(Star, "*"),
+                    Expr::literal(10),
                 )),
             ),
             // print statement
@@ -433,11 +449,11 @@ mod test {
             ),
         ];
 
-        for (src, res) in tests {
+        for (src, expected) in tests {
             let mut scanner = Scanner::new(src);
             let tokens = scanner.scan_tokens().unwrap();
             let mut parser = Parser::new(&tokens);
-            let stmts: Vec<Stmt> = vec![res];
+            let stmts: Vec<Stmt> = vec![expected];
 
             assert_eq!(parser.parse().unwrap(), StmtStream(stmts));
         }
