@@ -1,3 +1,5 @@
+use std::fmt::{Display, Formatter};
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Type {
     LeftParen,
@@ -68,6 +70,17 @@ impl From<String> for Literal {
 impl From<&str> for Literal {
     fn from(value: &str) -> Self {
         Literal::Str(String::from(value))
+    }
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Str(val) => write!(f, "{}", val),
+            Literal::Num(val) => write!(f, "{}", val),
+            Literal::Bool(val) => write!(f, "{}", val),
+            Literal::Nil => write!(f, "nil"),
+        }
     }
 }
 

@@ -9,7 +9,7 @@ pub struct Parser<'a> {
 
 // A wrapper over vector of statements to not leak Stmt to public
 #[derive(Debug, PartialEq)]
-pub struct StmtStream(Vec<Stmt>);
+pub struct StmtStream(pub(crate) Vec<Stmt>);
 
 // Helper alias for shorter return types
 type ParserResult = Result<StmtStream, Vec<LoskError>>;
@@ -133,7 +133,9 @@ impl<'a> Parser<'a> {
     }
 
     fn print_statement(&mut self) -> StmtResult {
-        todo!()
+        let expr = self.expression()?;
+        self.consume(Type::SemiColon, "Expect ';' after value.")?;
+        Ok(Stmt::print(expr))
     }
 
     fn return_statement(&mut self) -> StmtResult {
@@ -156,7 +158,7 @@ impl<'a> Parser<'a> {
                     value: Box::new(value),
                 })
             } else {
-                Err(LoskError::new_parser_error(
+                Err(LoskError::parser_error(
                     &equals,
                     "Invalid assignment target.",
                 ))
@@ -304,10 +306,7 @@ impl<'a> Parser<'a> {
             let name = self.previous().clone();
             Ok(Expr::Variable { name })
         } else {
-            Err(LoskError::new_parser_error(
-                self.peek(),
-                "Expect expression.",
-            ))
+            Err(LoskError::parser_error(self.peek(), "Expect expression."))
         }
     }
 
@@ -327,7 +326,7 @@ impl<'a> Parser<'a> {
         if self.check(ty) {
             Ok(self.advance())
         } else {
-            Err(LoskError::new_parser_error(self.peek(), msg))
+            Err(LoskError::parser_error(self.peek(), msg))
         }
     }
 
@@ -385,15 +384,21 @@ mod test {
     }
 
     #[test]
-    fn test_expression_statements() {
-        let tests: [(&str, Expr); 3] = [
+    fn test_statements() {
+        let tests = [
+            // simple expression
             (
                 "3 < 4;",
-                Expr::binary(Expr::literal(3), token!(Less, "<"), Expr::literal(4)),
+                Stmt::expression(Expr::binary(
+                    Expr::literal(3),
+                    token!(Less, "<"),
+                    Expr::literal(4),
+                )),
             ),
+            // grouping expression
             (
                 "1 + (\"hello\" - 4) - foo;",
-                Expr::binary(
+                Stmt::expression(Expr::binary(
                     Expr::binary(
                         Expr::literal(1),
                         token!(Plus, "+"),
@@ -405,15 +410,26 @@ mod test {
                     ),
                     token!(Minus, "-"),
                     Expr::variable(token!(Identifier, "foo")),
-                ),
+                )),
             ),
+            // TODO: Nested grouping
+            // logical expression
             (
                 "true and false;", // logical or expressions
-                Expr::logical(
+                Stmt::expression(Expr::logical(
                     Expr::literal(true),
                     token!(And, "and"),
                     Expr::literal(false),
-                ),
+                )),
+            ),
+            // print statement
+            (
+                "print 1 + 2;",
+                Stmt::print(Expr::binary(
+                    Expr::literal(1),
+                    token!(Plus, "+"),
+                    Expr::literal(2),
+                )),
             ),
         ];
 
@@ -421,7 +437,7 @@ mod test {
             let mut scanner = Scanner::new(src);
             let tokens = scanner.scan_tokens().unwrap();
             let mut parser = Parser::new(&tokens);
-            let stmts: Vec<Stmt> = vec![Stmt::expression(res)];
+            let stmts: Vec<Stmt> = vec![res];
 
             assert_eq!(parser.parse().unwrap(), StmtStream(stmts));
         }
