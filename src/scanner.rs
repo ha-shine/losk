@@ -1,19 +1,13 @@
 use phf::{phf_map, Map};
-use thiserror::Error;
 
 use crate::token::{Literal, Token, Type};
+use crate::errors::LoskError;
 
 pub struct Scanner<'a> {
     start: usize,
     current: usize,
     line: usize,
     src: &'a str,
-}
-
-#[derive(Debug, Error, PartialEq)]
-pub enum LoskError {
-    #[error("[line {line:?}] scanner error: {msg:?}")]
-    ScannerError { line: usize, msg: String },
 }
 
 impl<'a> Scanner<'a> {

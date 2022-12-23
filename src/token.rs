@@ -45,7 +45,7 @@ pub enum Type {
     Eof,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Str(String),
     Num(f64),
@@ -53,7 +53,39 @@ pub enum Literal {
     Nil,
 }
 
-#[derive(Debug, PartialEq)]
+impl From<bool> for Literal {
+    fn from(value: bool) -> Self {
+        Literal::Bool(value)
+    }
+}
+
+impl From<String> for Literal {
+    fn from(value: String) -> Self {
+        Literal::Str(value)
+    }
+}
+
+impl From<&str> for Literal {
+    fn from(value: &str) -> Self {
+        Literal::Str(String::from(value))
+    }
+}
+
+macro_rules! impl_from_num_for_literal {
+    ( $( $t:ident )* ) => {
+        $(
+            impl From<$t> for Literal {
+                fn from(n: $t) -> Literal {
+                    Literal::Num(n as f64)
+                }
+            }
+        )*
+    }
+}
+
+impl_from_num_for_literal!(u8 i8 u16 i16 u32 i32 u64 i64 u128 i128 usize isize f32 f64);
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token {
     pub(crate) ty: Type,
     pub(crate) lexeme: String,
