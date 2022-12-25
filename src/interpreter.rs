@@ -1,8 +1,9 @@
+use std::io::Write;
+
 use crate::ast::{Expr, Stmt};
 use crate::errors::LoskError;
 use crate::parser::StmtStream;
 use crate::token::{Literal, Token, Type};
-use std::io::{stdout, Write};
 
 struct Interpreter<T>
 where
@@ -104,9 +105,7 @@ where
                 operator,
                 right,
             } => self.interpret_logical_expr(left, operator, right),
-            Expr::Unary { .. } => {
-                todo!()
-            }
+            Expr::Unary { operator, right } => self.interpret_unary_expr(operator, right),
             Expr::Variable { .. } => {
                 todo!()
             }
@@ -116,38 +115,47 @@ where
     fn interpret_binary_expr(
         &mut self,
         left: &Expr,
-        token: &Token,
+        operator: &Token,
         right: &Expr,
     ) -> Result<Literal, LoskError> {
         let left = self.interpret_expr(left)?;
         let right = self.interpret_expr(right)?;
 
-        match token.ty {
+        match operator.ty {
             Type::Minus => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left - right)),
-                _ => Err(LoskError::runtime_error(token, "Operands must be numbers.")),
+                _ => Err(LoskError::runtime_error(
+                    operator,
+                    "Operands must be numbers.",
+                )),
             },
             Type::Plus => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Str(left + &right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Num(left + right)),
                 _ => Err(LoskError::runtime_error(
-                    token,
+                    operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::Slash => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left / right)),
-                _ => Err(LoskError::runtime_error(token, "Operands must be numbers.")),
+                _ => Err(LoskError::runtime_error(
+                    operator,
+                    "Operands must be numbers.",
+                )),
             },
             Type::Star => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left * right)),
-                _ => Err(LoskError::runtime_error(token, "Operands must be numbers.")),
+                _ => Err(LoskError::runtime_error(
+                    operator,
+                    "Operands must be numbers.",
+                )),
             },
             Type::Greater => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left > right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left > right)),
                 _ => Err(LoskError::runtime_error(
-                    token,
+                    operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
@@ -155,7 +163,7 @@ where
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left >= right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left >= right)),
                 _ => Err(LoskError::runtime_error(
-                    token,
+                    operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
@@ -163,7 +171,7 @@ where
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left < right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left < right)),
                 _ => Err(LoskError::runtime_error(
-                    token,
+                    operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
@@ -171,27 +179,27 @@ where
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left <= right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left <= right)),
                 _ => Err(LoskError::runtime_error(
-                    token,
+                    operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::EqualEqual => Ok(Literal::Bool(left == right)),
             Type::BangEqual => Ok(Literal::Bool(left != right)),
-            _ => Err(LoskError::runtime_error(token, "Invalid operator.")),
+            _ => Err(LoskError::runtime_error(operator, "Invalid operator.")),
         }
     }
 
     fn interpret_logical_expr(
         &mut self,
         left: &Expr,
-        token: &Token,
+        operator: &Token,
         right: &Expr,
     ) -> Result<Literal, LoskError> {
         let left = match self.interpret_expr(left)? {
             Literal::Bool(val) => val,
             _ => {
                 return Err(LoskError::runtime_error(
-                    token,
+                    operator,
                     "Operand must be boolean expression.",
                 ))
             }
@@ -202,7 +210,7 @@ where
         // If token is "or", execution of right is only necessary if left is false
         // If token is "and", execution of right is only necessary if left is true
         // Otherwise, the value is already known and it can be returned immediately.
-        if token.ty == Type::Or {
+        if operator.ty == Type::Or {
             if left {
                 return Ok(Literal::from(true));
             }
@@ -213,8 +221,24 @@ where
         match self.interpret_expr(right)? {
             val @ Literal::Bool(_) => Ok(val),
             _ => Err(LoskError::runtime_error(
-                token,
+                operator,
                 "Operand must be boolean expression.",
+            )),
+        }
+    }
+
+    fn interpret_unary_expr(
+        &mut self,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Literal, LoskError> {
+        let right = self.interpret_expr(right)?;
+        match (operator.ty, right) {
+            (Type::Minus, Literal::Num(val)) => Ok(Literal::from(-val)),
+            (Type::Bang, Literal::Bool(val)) => Ok(Literal::from(!val)),
+            _ => Err(LoskError::runtime_error(
+                operator,
+                "Invalid types for unary operators.",
             )),
         }
     }
@@ -222,15 +246,30 @@ where
 
 #[cfg(test)]
 mod test {
+    use crate::errors::LoskError;
+    use std::str;
+
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
 
+    macro_rules! token {
+        ($ty:ident, $lex:literal) => {
+            Token::new(Type::$ty, String::from($lex), 0, Literal::Nil)
+        };
+    }
+
     #[test]
     fn test_expression_statements() {
         let tests = [
-            ("print (1 + 2) * 5;", "15\n"),
+            // binary and grouping expressions, with precedence
+            ("print (1 + 2) * 5 + 2;", "17\n"),
+            ("print \"hello \" + \"world\";", "hello world\n"),
+            // logical expressions
             ("print false or true;", "true\n"),
+            // unary expressions
+            ("print !true;", "false\n"),
+            ("print -10.5;", "-10.5\n"),
         ];
 
         for (src, expected) in tests {
@@ -241,7 +280,69 @@ mod test {
             let mut output: Vec<u8> = Vec::new();
             let mut interpreter = Interpreter::new(&mut output);
             interpreter.interpret(&parser.parse().unwrap()).unwrap();
-            assert_eq!(expected.as_bytes(), &output);
+            assert_eq!(expected, str::from_utf8(&output).unwrap());
+        }
+    }
+
+    #[test]
+    fn test_binary_expression_with_wrong_types() {
+        let tests = [
+            (
+                "print 1 + false;",
+                "Operands must be either strings or numbers.",
+            ),
+            (
+                "print true + false;",
+                "Operands must be either strings or numbers.",
+            ),
+            (
+                "print true + false;",
+                "Operands must be either strings or numbers.",
+            ),
+            (
+                "print \"hello\" + 10;",
+                "Operands must be either strings or numbers.",
+            ),
+        ];
+
+        for (src, expected) in tests {
+            let mut scanner = Scanner::new(src);
+            let tokens = scanner.scan_tokens().unwrap();
+
+            let mut parser = Parser::new(&tokens);
+            let mut output: Vec<u8> = Vec::new();
+            let mut interpreter = Interpreter::new(&mut output);
+            if let Err(LoskError::RuntimeError { msg, .. }) =
+                interpreter.interpret(&parser.parse().unwrap())
+            {
+                assert_eq!(&msg, expected);
+            } else {
+                panic!()
+            }
+        }
+    }
+
+    #[test]
+    fn test_unary_expression_with_wrong_types() {
+        let tests = [
+            ("-false;", "Invalid types for unary operators."),
+            ("!10;", "Invalid types for unary operators."),
+        ];
+
+        for (src, expected) in tests {
+            let mut scanner = Scanner::new(src);
+            let tokens = scanner.scan_tokens().unwrap();
+
+            let mut parser = Parser::new(&tokens);
+            let mut output: Vec<u8> = Vec::new();
+            let mut interpreter = Interpreter::new(&mut output);
+            if let Err(LoskError::RuntimeError { msg, .. }) =
+                interpreter.interpret(&parser.parse().unwrap())
+            {
+                assert_eq!(&msg, expected);
+            } else {
+                panic!()
+            }
         }
     }
 }
