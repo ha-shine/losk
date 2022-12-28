@@ -272,7 +272,7 @@ impl<'a> Scanner<'a> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::scanner::LoskError::ScannerError;
     use crate::scanner::Scanner;
     use crate::token::{Literal, Token, Type};

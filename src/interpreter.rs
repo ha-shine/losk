@@ -1,23 +1,28 @@
 use std::io::Write;
 
 use crate::ast::{Expr, Stmt};
+use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::parser::StmtStream;
 use crate::token::{Literal, Token, Type};
 
-struct Interpreter<T>
+struct Interpreter<'a, T>
 where
     T: Write,
 {
     stdout: T,
+    env: Environment<'a, 'a>,
 }
 
-impl<T> Interpreter<T>
+impl<'a, T> Interpreter<'a, T>
 where
     T: Write,
 {
     pub fn new(stdout: T) -> Self {
-        Interpreter { stdout }
+        Interpreter {
+            stdout,
+            env: Environment::new(),
+        }
     }
 
     pub fn interpret(&mut self, stmts: &StmtStream) -> Result<(), LoskError> {
@@ -51,7 +56,7 @@ where
                 then_branch,
                 else_branch,
             } => {
-                todo!()
+                self.interpret_if_stmt(expression, token, then_branch, else_branch)?;
             }
             Stmt::While {
                 condition,
@@ -67,18 +72,42 @@ where
                 todo!()
             }
             Stmt::Var { name, init } => {
-                todo!()
+                self.interpret_var_stmt(name, init)?;
             }
         };
 
         Ok(())
     }
 
-    fn interpret_print_stmt(&mut self, expr: &Expr) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expr)?;
+    fn interpret_if_stmt(
+        &mut self,
+        expression: &Expr,
+        token: &Token,
+        then_branch: &Stmt,
+        else_branch: &Stmt,
+    ) -> Result<(), LoskError> {
+        let value = self.interpret_expr(expression)?;
+        match value {
+            Literal::Bool(true) => self.interpret_stmt(then_branch),
+            Literal::Bool(false) => self.interpret_stmt(else_branch),
+            _ => Err(LoskError::runtime_error(
+                token,
+                "If condition must be a boolean expression.",
+            )),
+        }
+    }
+
+    fn interpret_print_stmt(&mut self, expression: &Expr) -> Result<(), LoskError> {
+        let value = self.interpret_expr(expression)?;
 
         // TODO: Write returns an error, this should bubble up to the caller
         writeln!(self.stdout, "{}", value);
+        Ok(())
+    }
+
+    fn interpret_var_stmt(&mut self, name: &Token, expression: &Expr) -> Result<(), LoskError> {
+        let value = self.interpret_expr(expression)?;
+        self.env.assign(name.lexeme.clone(), value);
         Ok(())
     }
 
@@ -106,9 +135,7 @@ where
                 right,
             } => self.interpret_logical_expr(left, operator, right),
             Expr::Unary { operator, right } => self.interpret_unary_expr(operator, right),
-            Expr::Variable { .. } => {
-                todo!()
-            }
+            Expr::Variable { name } => self.interpret_variable_expr(name),
         }
     }
 
@@ -242,10 +269,21 @@ where
             )),
         }
     }
+
+    fn interpret_variable_expr(&mut self, name: &Token) -> Result<Literal, LoskError> {
+        if let Some(value) = self.env.get(&name.lexeme) {
+            Ok(value.clone())
+        } else {
+            Err(LoskError::runtime_error(
+                name,
+                &format!("Use of undefined variable '{}'.", name.lexeme),
+            ))
+        }
+    }
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::errors::LoskError;
     use std::str;
 
@@ -253,14 +291,30 @@ mod test {
     use crate::parser::Parser;
     use crate::scanner::Scanner;
 
-    macro_rules! token {
-        ($ty:ident, $lex:literal) => {
-            Token::new(Type::$ty, String::from($lex), 0, Literal::Nil)
-        };
+    fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
+        let mut scanner = Scanner::new(src);
+        let tokens = scanner.scan_tokens().unwrap();
+
+        let mut parser = Parser::new(&tokens);
+        let mut output: Vec<u8> = Vec::new();
+        let mut interpreter = Interpreter::new(&mut output);
+        let result = interpreter.interpret(&parser.parse().unwrap());
+
+        if let Some(out) = out {
+            assert_eq!(out, str::from_utf8(&output).unwrap());
+        }
+
+        if let Some(err) = err {
+            if let Err(LoskError::RuntimeError { msg, .. }) = result {
+                assert_eq!(&msg, err);
+            } else {
+                panic!()
+            }
+        }
     }
 
     #[test]
-    fn test_expression_statements() {
+    fn test_lox_programs() {
         let tests = [
             // binary and grouping expressions, with precedence
             ("print (1 + 2) * 5 + 2;", "17\n"),
@@ -270,17 +324,21 @@ mod test {
             // unary expressions
             ("print !true;", "false\n"),
             ("print -10.5;", "-10.5\n"),
+            // variable assignment
+            (
+                "var foo = \"bar\";\
+                 print foo;",
+                "bar\n",
+            ),
+            // if else clauses
+            (
+                include_str!("../data/if_else.lox"),
+                include_str!("../data/if_else.lox.expected"),
+            ),
         ];
 
         for (src, expected) in tests {
-            let mut scanner = Scanner::new(src);
-            let tokens = scanner.scan_tokens().unwrap();
-
-            let mut parser = Parser::new(&tokens);
-            let mut output: Vec<u8> = Vec::new();
-            let mut interpreter = Interpreter::new(&mut output);
-            interpreter.interpret(&parser.parse().unwrap()).unwrap();
-            assert_eq!(expected, str::from_utf8(&output).unwrap());
+            test_statements(src, Some(expected), None);
         }
     }
 
@@ -306,19 +364,7 @@ mod test {
         ];
 
         for (src, expected) in tests {
-            let mut scanner = Scanner::new(src);
-            let tokens = scanner.scan_tokens().unwrap();
-
-            let mut parser = Parser::new(&tokens);
-            let mut output: Vec<u8> = Vec::new();
-            let mut interpreter = Interpreter::new(&mut output);
-            if let Err(LoskError::RuntimeError { msg, .. }) =
-                interpreter.interpret(&parser.parse().unwrap())
-            {
-                assert_eq!(&msg, expected);
-            } else {
-                panic!()
-            }
+            test_statements(src, None, Some(expected));
         }
     }
 
@@ -330,19 +376,20 @@ mod test {
         ];
 
         for (src, expected) in tests {
-            let mut scanner = Scanner::new(src);
-            let tokens = scanner.scan_tokens().unwrap();
+            test_statements(src, None, Some(expected));
+        }
+    }
 
-            let mut parser = Parser::new(&tokens);
-            let mut output: Vec<u8> = Vec::new();
-            let mut interpreter = Interpreter::new(&mut output);
-            if let Err(LoskError::RuntimeError { msg, .. }) =
-                interpreter.interpret(&parser.parse().unwrap())
-            {
-                assert_eq!(&msg, expected);
-            } else {
-                panic!()
-            }
+    #[test]
+    fn test_use_of_undefined_variable() {
+        let tests = [(
+            "var foo = \"bar\";\
+                 print bar;",
+            "Use of undefined variable 'bar'.",
+        )];
+
+        for (src, expected) in tests {
+            test_statements(src, None, Some(expected));
         }
     }
 }

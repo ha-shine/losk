@@ -109,7 +109,12 @@ impl<'a> Parser<'a> {
     }
 
     fn block(&mut self) -> BlockResult {
-        todo!()
+        let mut stmts = Vec::new();
+        while !self.check(Type::RightBrace) && !self.is_at_end() {
+            stmts.push(self.declaration()?);
+        }
+        self.consume(Type::RightBrace, "Expect '}' after block.")?;
+        Ok(stmts)
     }
 
     fn expression_statement(&mut self) -> StmtResult {
@@ -121,7 +126,18 @@ impl<'a> Parser<'a> {
     }
 
     fn if_statement(&mut self) -> StmtResult {
-        todo!()
+        let token = self.previous().clone();
+        self.consume(Type::LeftParen, "Expect '(' after 'if'.")?;
+        let condition = self.expression()?;
+        self.consume(Type::RightParen, "Expect ')' after if condition.")?;
+
+        let then_branch = self.statement()?;
+        let mut else_branch = Stmt::block(Vec::new());
+        if self.match_one(Type::Else) {
+            else_branch = self.statement()?;
+        }
+
+        Ok(Stmt::if_(condition, token, then_branch, else_branch))
     }
 
     fn while_statement(&mut self) -> StmtResult {
@@ -371,7 +387,7 @@ impl<'a> Parser<'a> {
 }
 
 #[cfg(test)]
-mod test {
+mod tests {
     use crate::ast::{Expr, Stmt};
     use crate::parser::{Parser, StmtStream};
     use crate::scanner::Scanner;

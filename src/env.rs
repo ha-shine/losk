@@ -1,7 +1,7 @@
 use crate::token::Literal;
 use std::collections::HashMap;
 
-struct Environment<'a, 'b>
+pub(crate) struct Environment<'a, 'b>
 where
     'b: 'a,
 {
@@ -13,14 +13,14 @@ impl<'a, 'b> Environment<'a, 'b>
 where
     'b: 'a,
 {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Environment {
             enclosing: None,
             values: HashMap::new(),
         }
     }
 
-    fn from(enclosing: &'a mut Environment<'b, 'b>) -> Self {
+    pub(crate) fn with(enclosing: &'a mut Environment<'b, 'b>) -> Self {
         Environment {
             enclosing: Some(enclosing),
             values: HashMap::new(),
@@ -75,7 +75,7 @@ mod tests {
         env1.assign(String::from("foo"), Literal::from("bar"));
 
         {
-            let mut env2 = Environment::from(&mut env1);
+            let mut env2 = Environment::with(&mut env1);
             env2.assign(String::from("foo"), Literal::from("foofoo"));
             assert_eq!(env2.get_at(0, "foo"), Some(&Literal::from("foofoo")));
             assert_eq!(env2.get_at(1, "foo"), Some(&Literal::from("bar")));
