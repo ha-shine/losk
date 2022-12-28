@@ -1,4 +1,5 @@
 use std::fmt::{Display, Formatter};
+use std::rc::Rc;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Type {
@@ -49,7 +50,7 @@ pub enum Type {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
-    Str(String),
+    Str(Rc<String>),
     Num(f64),
     Bool(bool),
     Nil,
@@ -63,13 +64,13 @@ impl From<bool> for Literal {
 
 impl From<String> for Literal {
     fn from(value: String) -> Self {
-        Literal::Str(value)
+        Literal::Str(Rc::new(value))
     }
 }
 
 impl From<&str> for Literal {
     fn from(value: &str) -> Self {
-        Literal::Str(String::from(value))
+        Literal::Str(Rc::new(String::from(value)))
     }
 }
 

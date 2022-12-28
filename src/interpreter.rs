@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::io::Write;
+use std::rc::Rc;
 
 use crate::ast::{Expr, Stmt};
 use crate::env::Environment;
@@ -6,22 +8,23 @@ use crate::errors::LoskError;
 use crate::parser::StmtStream;
 use crate::token::{Literal, Token, Type};
 
-struct Interpreter<'a, T>
+struct Interpreter<T>
 where
     T: Write,
 {
     stdout: T,
-    env: Environment<'a, 'a>,
+    env: Rc<RefCell<Environment>>,
 }
 
-impl<'a, T> Interpreter<'a, T>
+#[allow(dead_code)]
+impl<T> Interpreter<T>
 where
     T: Write,
 {
     pub fn new(stdout: T) -> Self {
         Interpreter {
             stdout,
-            env: Environment::new(),
+            env: Rc::new(RefCell::new(Environment::new())),
         }
     }
 
@@ -42,12 +45,12 @@ where
                 self.interpret_expr(expression)?;
             }
             Stmt::Block { statements } => {
-                self.interpret_stmt_vec(statements)?;
+                self.interpret_block_stmt(statements)?;
             }
-            Stmt::Function { name, params, body } => {
+            Stmt::Function { .. } => {
                 todo!()
             }
-            Stmt::Class { name, methods } => {
+            Stmt::Class { .. } => {
                 todo!()
             }
             Stmt::If {
@@ -68,7 +71,7 @@ where
             Stmt::Print { expression } => {
                 self.interpret_print_stmt(expression)?;
             }
-            Stmt::Return { keyword, value } => {
+            Stmt::Return { .. } => {
                 todo!()
             }
             Stmt::Var { name, init } => {
@@ -76,6 +79,19 @@ where
             }
         };
 
+        Ok(())
+    }
+
+    fn interpret_block_stmt(&mut self, statements: &Vec<Stmt>) -> Result<(), LoskError> {
+        let current = self.env.clone();
+        self.env = Rc::new(RefCell::new(Environment::with(current.clone())));
+        for stmt in statements {
+            if let err @ Err(_) = self.interpret_stmt(stmt) {
+                self.env = current;
+                return err;
+            }
+        }
+        self.env = current;
         Ok(())
     }
 
@@ -128,7 +144,7 @@ where
 
     fn interpret_var_stmt(&mut self, name: &Token, expression: &Expr) -> Result<(), LoskError> {
         let value = self.interpret_expr(expression)?;
-        self.env.assign(name.lexeme.clone(), value);
+        self.env.borrow_mut().define(&name.lexeme, value);
         Ok(())
     }
 
@@ -162,8 +178,13 @@ where
     //   correct variable
     fn interpret_assign_expr(&mut self, name: &Token, value: &Expr) -> Result<Literal, LoskError> {
         let value = self.interpret_expr(value)?;
-        self.env.assign(name.lexeme.clone(), value.clone());
-        Ok(value)
+        match self.env.borrow_mut().assign(&name.lexeme, value.clone()) {
+            Ok(_) => Ok(value),
+            Err(_) => Err(LoskError::runtime_error(
+                name,
+                &format!("Undefined variable '{}'.", &name.lexeme),
+            )),
+        }
     }
 
     fn interpret_binary_expr(
@@ -184,7 +205,9 @@ where
                 )),
             },
             Type::Plus => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::from(left + &right)),
+                (Literal::Str(left), Literal::Str(right)) => {
+                    Ok(Literal::from(String::from(left.as_str()) + &right))
+                }
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Num(left + right)),
                 _ => Err(LoskError::runtime_error(
                     operator,
@@ -298,8 +321,8 @@ where
     }
 
     fn interpret_variable_expr(&mut self, name: &Token) -> Result<Literal, LoskError> {
-        if let Some(value) = self.env.get(&name.lexeme) {
-            Ok(value.clone())
+        if let Some(value) = self.env.borrow_mut().get(&name.lexeme) {
+            Ok(value)
         } else {
             Err(LoskError::runtime_error(
                 name,
@@ -311,9 +334,9 @@ where
 
 #[cfg(test)]
 mod tests {
-    use crate::errors::LoskError;
     use std::str;
 
+    use crate::errors::LoskError;
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
     use crate::scanner::Scanner;
@@ -327,16 +350,17 @@ mod tests {
         let mut interpreter = Interpreter::new(&mut output);
         let result = interpreter.interpret(&parser.parse().unwrap());
 
-        if let Some(out) = out {
-            assert_eq!(out, str::from_utf8(&output).unwrap());
+        match (result, err) {
+            (Err(LoskError::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
+            (Err(LoskError::RuntimeError { msg, .. }), None) => {
+                panic!("Not expecting any error, found '{}'", msg)
+            }
+            (Ok(_), Some(err)) => panic!("Expecting an error '{}', found none.", err),
+            _ => {}
         }
 
-        if let Some(err) = err {
-            if let Err(LoskError::RuntimeError { msg, .. }) = result {
-                assert_eq!(&msg, err);
-            } else {
-                panic!()
-            }
+        if let Some(out) = out {
+            assert_eq!(str::from_utf8(&output).unwrap(), out);
         }
     }
 
@@ -364,6 +388,10 @@ mod tests {
             (
                 include_str!("../data/while.lox"),
                 include_str!("../data/while.lox.expected"),
+            ),
+            (
+                include_str!("../data/for.lox"),
+                include_str!("../data/for.lox.expected"),
             ),
         ];
 

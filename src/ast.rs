@@ -4,6 +4,7 @@ use crate::token::{Literal, Token};
 // expensive to do so, and the cloning are done during parsing stage only.
 // I can try to use references instead of cloning if it starts showing inefficiency.
 
+#[allow(dead_code)]
 #[derive(Debug, PartialEq)]
 pub(crate) enum Expr {
     Assign {
@@ -44,6 +45,7 @@ pub(crate) enum Expr {
     },
 }
 
+#[allow(dead_code)]
 impl Expr {
     pub(crate) fn nil() -> Self {
         Expr::literal(Literal::Nil)
@@ -168,10 +170,12 @@ impl Stmt {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn function(name: Token, params: Vec<Token>, body: Vec<Stmt>) -> Self {
         Stmt::Function { name, params, body }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn class(name: Token, methods: Vec<Stmt>) -> Self {
         Stmt::Class { name, methods }
     }
@@ -204,6 +208,7 @@ impl Stmt {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn return_(keyword: Token, value: Expr) -> Self {
         Stmt::Return {
             keyword,
@@ -211,6 +216,7 @@ impl Stmt {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn var(name: Token, init: Expr) -> Self {
         Stmt::Var {
             name,

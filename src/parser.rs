@@ -150,7 +150,39 @@ impl<'a> Parser<'a> {
     }
 
     fn for_statement(&mut self) -> StmtResult {
-        todo!()
+        let token = self.previous().clone();
+        self.consume(Type::LeftParen, "Expect '(' after 'for'.")?;
+
+        let initializer = if self.match_one(Type::SemiColon) {
+            Stmt::block(Vec::new())
+        } else if self.match_one(Type::Var) {
+            self.var_declaration()?
+        } else {
+            self.expression_statement()?
+        };
+
+        let condition = if !self.check(Type::SemiColon) {
+            self.expression()?
+        } else {
+            Expr::nil()
+        };
+        self.consume(Type::SemiColon, "Expect ';' after loop condition.")?;
+
+        let increment = if !self.check(Type::RightParen) {
+            self.expression()?
+        } else {
+            Expr::nil()
+        };
+        self.consume(Type::RightParen, "Expect ')' after for clauses.")?;
+
+        let while_body = Stmt::block(vec![self.statement()?, Stmt::expression(increment)]);
+
+        Ok(Stmt::block(vec![
+            // initialise the variables first
+            initializer,
+            // after that, it's just normal while loop
+            Stmt::while_(condition, while_body, token),
+        ]))
     }
 
     fn print_statement(&mut self) -> StmtResult {
