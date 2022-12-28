@@ -1,31 +1,39 @@
 use std::cell::RefCell;
 use std::io::Write;
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ast::{Expr, Stmt};
+use crate::callable::{BoxedFunction, NativeCallable};
 use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::parser::StmtStream;
 use crate::token::{Literal, Token, Type};
 
-struct Interpreter<T>
-where
-    T: Write,
-{
-    stdout: T,
+pub(crate) struct Interpreter {
     env: Rc<RefCell<Environment>>,
+    stdout: Rc<RefCell<dyn Write>>,
 }
 
 #[allow(dead_code)]
-impl<T> Interpreter<T>
-where
-    T: Write,
-{
-    pub fn new(stdout: T) -> Self {
-        Interpreter {
-            stdout,
-            env: Rc::new(RefCell::new(Environment::new())),
-        }
+impl Interpreter {
+    pub fn new(stdout: Rc<RefCell<dyn Write>>) -> Self {
+        let globals = Rc::new(RefCell::new(Environment::new()));
+
+        let clock: BoxedFunction = Box::new(|_| {
+            let start = SystemTime::now();
+            let since_epoch = start.duration_since(UNIX_EPOCH).unwrap();
+            println!("{:?}\n", since_epoch);
+            Ok(Literal::Nil)
+        });
+        let clock_callable = NativeCallable::new(clock, String::from("clock"), 0);
+        globals
+            .borrow_mut()
+            .define("clock", Literal::Callable(Rc::new(clock_callable)));
+
+        let env = Rc::new(RefCell::new(Environment::with(globals)));
+
+        Interpreter { env, stdout }
     }
 
     pub fn interpret(&mut self, stmts: &StmtStream) -> Result<(), LoskError> {
@@ -138,7 +146,7 @@ where
         let value = self.interpret_expr(expression)?;
 
         // TODO: Write returns an error, this should bubble up to the caller
-        writeln!(self.stdout, "{}", value);
+        writeln!(self.stdout.borrow_mut(), "{}", value);
         Ok(())
     }
 
@@ -156,9 +164,11 @@ where
                 operator,
                 right,
             } => self.interpret_binary_expr(left, operator, right),
-            Expr::Call { .. } => {
-                todo!()
-            }
+            Expr::Call {
+                callee,
+                paren,
+                args,
+            } => self.interpret_call_expr(callee, paren, args),
             Expr::Get { .. } => {
                 todo!()
             }
@@ -266,6 +276,40 @@ where
         }
     }
 
+    fn interpret_call_expr(
+        &mut self,
+        callee: &Expr,
+        paren: &Token,
+        args: &Vec<Expr>,
+    ) -> Result<Literal, LoskError> {
+        let callee = self.interpret_expr(callee)?;
+        let mut evaluated_args = Vec::new();
+        for arg in args {
+            evaluated_args.push(self.interpret_expr(arg)?);
+        }
+
+        match callee {
+            Literal::Callable(func) => {
+                if func.arity() == evaluated_args.len() {
+                    func.execute(self, &evaluated_args)
+                } else {
+                    Err(LoskError::runtime_error(
+                        paren,
+                        &format!(
+                            "Expected {} arguments but got {}.",
+                            func.arity(),
+                            evaluated_args.len()
+                        ),
+                    ))
+                }
+            }
+            _ => Err(LoskError::runtime_error(
+                paren,
+                "Can only call functions and classes",
+            )),
+        }
+    }
+
     fn interpret_logical_expr(
         &mut self,
         left: &Expr,
@@ -334,6 +378,8 @@ where
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::str;
 
     use crate::errors::LoskError;
@@ -346,8 +392,9 @@ mod tests {
         let tokens = scanner.scan_tokens().unwrap();
 
         let mut parser = Parser::new(&tokens);
-        let mut output: Vec<u8> = Vec::new();
-        let mut interpreter = Interpreter::new(&mut output);
+        let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let mut interpreter = Interpreter::new(output.clone());
         let result = interpreter.interpret(&parser.parse().unwrap());
 
         match (result, err) {
@@ -360,7 +407,7 @@ mod tests {
         }
 
         if let Some(out) = out {
-            assert_eq!(str::from_utf8(&output).unwrap(), out);
+            assert_eq!(str::from_utf8(&output.borrow()).unwrap(), out);
         }
     }
 
@@ -381,6 +428,8 @@ mod tests {
                  print foo;",
                 "bar\n",
             ),
+            // printing function
+            ("print clock;", "<Function clock>\n"),
             (
                 include_str!("../data/if_else.lox"),
                 include_str!("../data/if_else.lox.expected"),
@@ -449,5 +498,18 @@ mod tests {
         for (src, expected) in tests {
             test_statements(src, None, Some(expected));
         }
+    }
+
+    #[test]
+    fn test_native_functions() {
+        let tests = ["clock();"];
+        for test in tests {
+            test_statements(test, None, None);
+        }
+    }
+
+    #[test]
+    fn test_native_functions_with_wrong_argument_number() {
+        test_statements("clock(1);", None, Some("Expected 0 arguments but got 1."))
     }
 }

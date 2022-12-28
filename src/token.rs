@@ -1,4 +1,6 @@
-use std::fmt::{Display, Formatter};
+use crate::callable::Callable;
+use std::fmt::{Debug, Display, Formatter};
+use std::ptr;
 use std::rc::Rc;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -48,12 +50,28 @@ pub enum Type {
     Eof,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Literal {
+#[derive(Debug, Clone)]
+pub(crate) enum Literal {
+    Callable(Rc<dyn Callable>),
     Str(Rc<String>),
     Num(f64),
     Bool(bool),
     Nil,
+}
+
+impl PartialEq for Literal {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Literal::Callable(lhs), Literal::Callable(rhs)) => ptr::eq(lhs, rhs),
+            (Literal::Str(lhs), Literal::Str(rhs)) => lhs == rhs,
+            (Literal::Num(lhs), Literal::Num(rhs)) => lhs == rhs,
+            (Literal::Bool(lhs), Literal::Bool(rhs)) => lhs == rhs,
+            (Literal::Nil, Literal::Nil) => true,
+            (Literal::Nil, _) => false,
+            (_, Literal::Nil) => false,
+            _ => false,
+        }
+    }
 }
 
 impl From<bool> for Literal {
@@ -77,6 +95,9 @@ impl From<&str> for Literal {
 impl Display for Literal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
+            Literal::Callable(val) => {
+                write!(f, "{:?}", val)
+            }
             Literal::Str(val) => write!(f, "{}", val),
             Literal::Num(val) => write!(f, "{}", val),
             Literal::Bool(val) => write!(f, "{}", val),

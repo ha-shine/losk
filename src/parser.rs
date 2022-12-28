@@ -18,6 +18,7 @@ type StmtResult = Result<Stmt, LoskError>;
 type ExprResult = Result<Expr, LoskError>;
 
 // Function kind to differentiate between normal functions and class methods during parsing
+#[allow(dead_code)]
 enum FunctionKind {
     Function,
     Method,
@@ -68,7 +69,7 @@ impl<'a> Parser<'a> {
         todo!()
     }
 
-    fn function(&mut self, kind: FunctionKind) -> StmtResult {
+    fn function(&mut self, _: FunctionKind) -> StmtResult {
         todo!()
     }
 
@@ -336,8 +337,26 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
-    fn finish_call(&mut self, expr: Expr) -> ExprResult {
-        todo!()
+    fn finish_call(&mut self, callee: Expr) -> ExprResult {
+        let mut args: Vec<Expr> = Vec::new();
+        if !self.check(Type::RightParen) {
+            loop {
+                if args.len() >= 255 {
+                    return Err(LoskError::parser_error(
+                        self.peek(),
+                        "Can't have more than 255 arguments.",
+                    ));
+                }
+
+                args.push(self.expression()?);
+                if !self.match_one(Type::Comma) {
+                    break;
+                }
+            }
+        }
+
+        let paren = self.consume(Type::RightParen, "Expect ')' after arguments.")?;
+        Ok(Expr::call(callee, paren.clone(), args))
     }
 
     fn primary(&mut self) -> ExprResult {
