@@ -63,7 +63,7 @@ where
                 body,
                 token,
             } => {
-                todo!()
+                self.interpret_while_stmt(condition, body, token)?;
             }
             Stmt::Print { expression } => {
                 self.interpret_print_stmt(expression)?;
@@ -97,6 +97,27 @@ where
         }
     }
 
+    fn interpret_while_stmt(
+        &mut self,
+        condition: &Expr,
+        body: &Stmt,
+        token: &Token,
+    ) -> Result<(), LoskError> {
+        loop {
+            match self.interpret_expr(condition) {
+                Ok(Literal::Bool(true)) => self.interpret_stmt(body)?,
+                Ok(Literal::Bool(false)) => return Ok(()),
+                Err(err) => return Err(err),
+                _ => {
+                    return Err(LoskError::runtime_error(
+                        token,
+                        "While condition must be a boolean expression.",
+                    ))
+                }
+            }
+        }
+    }
+
     fn interpret_print_stmt(&mut self, expression: &Expr) -> Result<(), LoskError> {
         let value = self.interpret_expr(expression)?;
 
@@ -113,9 +134,7 @@ where
 
     fn interpret_expr(&mut self, expr: &Expr) -> Result<Literal, LoskError> {
         match expr {
-            Expr::Assign { .. } => {
-                todo!()
-            }
+            Expr::Assign { name, value } => self.interpret_assign_expr(name, value),
             Expr::Binary {
                 left,
                 operator,
@@ -137,6 +156,14 @@ where
             Expr::Unary { operator, right } => self.interpret_unary_expr(operator, right),
             Expr::Variable { name } => self.interpret_variable_expr(name),
         }
+    }
+
+    // TODO: This will need to be modified when resolver is implemented since we need to assign to
+    //   correct variable
+    fn interpret_assign_expr(&mut self, name: &Token, value: &Expr) -> Result<Literal, LoskError> {
+        let value = self.interpret_expr(value)?;
+        self.env.assign(name.lexeme.clone(), value.clone());
+        Ok(value)
     }
 
     fn interpret_binary_expr(
@@ -330,10 +357,13 @@ mod tests {
                  print foo;",
                 "bar\n",
             ),
-            // if else clauses
             (
                 include_str!("../data/if_else.lox"),
                 include_str!("../data/if_else.lox.expected"),
+            ),
+            (
+                include_str!("../data/while.lox"),
+                include_str!("../data/while.lox.expected"),
             ),
         ];
 

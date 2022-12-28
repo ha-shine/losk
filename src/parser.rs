@@ -141,7 +141,12 @@ impl<'a> Parser<'a> {
     }
 
     fn while_statement(&mut self) -> StmtResult {
-        todo!()
+        let token = self.previous().clone();
+        self.consume(Type::LeftParen, "Expect '(' after 'while'.")?;
+        let condition = self.expression()?;
+        self.consume(Type::RightParen, "Expect ')' after while condition.")?;
+        let body = self.statement()?;
+        Ok(Stmt::while_(condition, body, token))
     }
 
     fn for_statement(&mut self) -> StmtResult {
