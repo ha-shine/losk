@@ -1,7 +1,7 @@
 use phf::{phf_map, Map};
 
-use crate::token::{Literal, Token, Type};
 use crate::errors::LoskError;
+use crate::token::{Literal, Token, Type};
 
 pub struct Scanner<'a> {
     start: usize,
@@ -167,7 +167,7 @@ impl<'a> Scanner<'a> {
         self.advance();
         Ok(self.make_token_with_val(
             Type::String,
-            Literal::Str(String::from(&self.src[self.start + 1..self.current - 1])),
+            Literal::from(String::from(&self.src[self.start + 1..self.current - 1])),
         ))
     }
 
@@ -298,7 +298,7 @@ mod test {
                     Type::String,
                     String::from("\"hello\""),
                     0,
-                    Literal::Str(String::from("hello"))
+                    Literal::from("hello")
                 ),
                 Token::new(Type::True, String::from("true"), 0, Literal::Bool(true)),
                 Token::new(Type::False, String::from("false"), 0, Literal::Bool(false)),

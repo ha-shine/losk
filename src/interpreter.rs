@@ -130,7 +130,7 @@ where
                 )),
             },
             Type::Plus => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Str(left + &right)),
+                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::from(left + &right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Num(left + right)),
                 _ => Err(LoskError::runtime_error(
                     operator,
