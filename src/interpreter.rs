@@ -60,7 +60,7 @@ impl Interpreter {
         env: Rc<RefCell<Environment>>,
     ) -> Result<(), LoskError> {
         let current = self.env.clone();
-        self.env = Rc::new(RefCell::new(Environment::with(env)));
+        self.env = env;
         for stmt in stmts {
             if let err @ Err(_) = self.visit_stmt(stmt) {
                 self.env = current;
@@ -315,7 +315,8 @@ impl StmtVisitor for Interpreter {
     type Item = ();
 
     fn visit_block(&mut self, expr: &Stmt, statements: &[Stmt]) -> Result<(), LoskError> {
-        self.execute_block_with_env(statements, self.env.clone())
+        let env = Rc::new(RefCell::new(Environment::with(self.env.clone())));
+        self.execute_block_with_env(statements, env)
     }
 
     fn visit_expression(

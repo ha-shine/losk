@@ -71,6 +71,7 @@ impl Environment {
         value: Literal,
     ) -> Result<(), UndefinedVariable> {
         if dist == 0 {
+            dbg!(&self.values);
             if let Some(val) = self.values.get_mut(key) {
                 *val = value;
                 Ok(())
