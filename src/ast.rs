@@ -1,3 +1,4 @@
+use crate::errors::LoskError;
 use crate::token::{Literal, Token};
 
 // Currently tokens are cloned in every creation (stmt or expr) because they are not that
@@ -43,6 +44,35 @@ pub(crate) enum Expr {
     Variable {
         name: Token,
     },
+}
+
+pub(crate) trait ExprVisitor {
+    type Item;
+
+    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Self::Item, LoskError>;
+    fn visit_binary(
+        &mut self,
+        left: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_call(
+        &mut self,
+        callee: &Expr,
+        paren: &Token,
+        args: &[Expr],
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_get(&mut self, object: &Expr, name: &Token) -> Result<Self::Item, LoskError>;
+    fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, LoskError>;
+    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, LoskError>;
+    fn visit_logical(
+        &mut self,
+        left: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Self::Item, LoskError>;
+    fn visit_variable(&mut self, name: &Token) -> Result<Self::Item, LoskError>;
 }
 
 #[allow(dead_code)]
@@ -157,6 +187,37 @@ pub(crate) enum Stmt {
         name: Token,
         init: Box<Expr>,
     },
+}
+
+// TODO: Generate this using procedural macros
+pub(crate) trait StmtVisitor {
+    type Item;
+
+    fn visit_block(&mut self, statements: &[Stmt]) -> Result<Self::Item, LoskError>;
+    fn visit_expression(&mut self, expression: &Expr) -> Result<Self::Item, LoskError>;
+    fn visit_function(
+        &mut self,
+        name: &Token,
+        params: &[Token],
+        body: &[Stmt],
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_class(&mut self, name: &Token, methods: &[Stmt]) -> Result<Self::Item, LoskError>;
+    fn visit_if(
+        &mut self,
+        expression: &Expr,
+        token: &Token,
+        then_branch: &Stmt,
+        else_branch: &Stmt,
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_while(
+        &mut self,
+        condition: &Expr,
+        body: &Stmt,
+        token: &Token,
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_print(&mut self, expression: &Expr) -> Result<Self::Item, LoskError>;
+    fn visit_return(&mut self, keyword: &Token, value: &Expr) -> Result<Self::Item, LoskError>;
+    fn visit_var(&mut self, name: &Token, init: &Expr) -> Result<Self::Item, LoskError>;
 }
 
 impl Stmt {

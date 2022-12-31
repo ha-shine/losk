@@ -3,14 +3,14 @@ use std::io::Write;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::ast::{Expr, Stmt};
+use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
 use crate::callable::{BoxedFunction, NativeCallable};
 use crate::env::Environment;
 use crate::errors::LoskError;
-use crate::parser::StmtStream;
+use crate::resolver::ResolvedStmts;
 use crate::token::{Literal, Token, Type};
 
-pub(crate) struct Interpreter {
+pub struct Interpreter {
     env: Rc<RefCell<Environment>>,
     stdout: Rc<RefCell<dyn Write>>,
 }
@@ -20,10 +20,11 @@ impl Interpreter {
     pub fn new(stdout: Rc<RefCell<dyn Write>>) -> Self {
         let globals = Rc::new(RefCell::new(Environment::new()));
 
-        let clock: BoxedFunction = Box::new(|_| {
+        let clock_out = stdout.clone();
+        let clock: BoxedFunction = Box::new(move |_| {
             let start = SystemTime::now();
             let since_epoch = start.duration_since(UNIX_EPOCH).unwrap();
-            println!("{:?}\n", since_epoch);
+            writeln!(clock_out.borrow_mut(), "{:?}\n", since_epoch).unwrap();
             Ok(Literal::Nil)
         });
         let clock_callable = NativeCallable::new(clock, String::from("clock"), 0);
@@ -36,12 +37,8 @@ impl Interpreter {
         Interpreter { env, stdout }
     }
 
-    pub fn interpret(&mut self, stmts: &StmtStream) -> Result<(), LoskError> {
-        self.interpret_stmt_vec(&stmts.0)
-    }
-
-    fn interpret_stmt_vec(&mut self, stmts: &Vec<Stmt>) -> Result<(), LoskError> {
-        for stmt in stmts {
+    pub fn interpret(&mut self, resolved: &ResolvedStmts) -> Result<(), LoskError> {
+        for stmt in &resolved.stmts {
             self.interpret_stmt(stmt)?;
         }
         Ok(())
@@ -49,144 +46,60 @@ impl Interpreter {
 
     fn interpret_stmt(&mut self, stmt: &Stmt) -> Result<(), LoskError> {
         match stmt {
-            Stmt::Expression { expression } => {
-                self.interpret_expr(expression)?;
-            }
-            Stmt::Block { statements } => {
-                self.interpret_block_stmt(statements)?;
-            }
-            Stmt::Function { .. } => {
-                todo!()
-            }
-            Stmt::Class { .. } => {
-                todo!()
-            }
+            Stmt::Expression { expression } => self.visit_expression(expression),
+            Stmt::Block { statements } => self.visit_block(statements),
+            Stmt::Function { name, params, body } => self.visit_function(name, params, body),
+            Stmt::Class { name, methods } => self.visit_class(name, methods),
             Stmt::If {
                 expression,
                 token,
                 then_branch,
                 else_branch,
-            } => {
-                self.interpret_if_stmt(expression, token, then_branch, else_branch)?;
-            }
+            } => self.visit_if(expression, token, then_branch, else_branch),
             Stmt::While {
                 condition,
                 body,
                 token,
-            } => {
-                self.interpret_while_stmt(condition, body, token)?;
-            }
-            Stmt::Print { expression } => {
-                self.interpret_print_stmt(expression)?;
-            }
-            Stmt::Return { .. } => {
-                todo!()
-            }
-            Stmt::Var { name, init } => {
-                self.interpret_var_stmt(name, init)?;
-            }
-        };
-
-        Ok(())
-    }
-
-    fn interpret_block_stmt(&mut self, statements: &Vec<Stmt>) -> Result<(), LoskError> {
-        let current = self.env.clone();
-        self.env = Rc::new(RefCell::new(Environment::with(current.clone())));
-        for stmt in statements {
-            if let err @ Err(_) = self.interpret_stmt(stmt) {
-                self.env = current;
-                return err;
-            }
+            } => self.visit_while(condition, body, token),
+            Stmt::Print { expression } => self.visit_print(expression),
+            Stmt::Return { keyword, value } => self.visit_return(keyword, value),
+            Stmt::Var { name, init } => self.visit_var(name, init),
         }
-        self.env = current;
-        Ok(())
-    }
-
-    fn interpret_if_stmt(
-        &mut self,
-        expression: &Expr,
-        token: &Token,
-        then_branch: &Stmt,
-        else_branch: &Stmt,
-    ) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expression)?;
-        match value {
-            Literal::Bool(true) => self.interpret_stmt(then_branch),
-            Literal::Bool(false) => self.interpret_stmt(else_branch),
-            _ => Err(LoskError::runtime_error(
-                token,
-                "If condition must be a boolean expression.",
-            )),
-        }
-    }
-
-    fn interpret_while_stmt(
-        &mut self,
-        condition: &Expr,
-        body: &Stmt,
-        token: &Token,
-    ) -> Result<(), LoskError> {
-        loop {
-            match self.interpret_expr(condition) {
-                Ok(Literal::Bool(true)) => self.interpret_stmt(body)?,
-                Ok(Literal::Bool(false)) => return Ok(()),
-                Err(err) => return Err(err),
-                _ => {
-                    return Err(LoskError::runtime_error(
-                        token,
-                        "While condition must be a boolean expression.",
-                    ))
-                }
-            }
-        }
-    }
-
-    fn interpret_print_stmt(&mut self, expression: &Expr) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expression)?;
-
-        // TODO: Write returns an error, this should bubble up to the caller
-        writeln!(self.stdout.borrow_mut(), "{}", value);
-        Ok(())
-    }
-
-    fn interpret_var_stmt(&mut self, name: &Token, expression: &Expr) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expression)?;
-        self.env.borrow_mut().define(&name.lexeme, value);
-        Ok(())
     }
 
     fn interpret_expr(&mut self, expr: &Expr) -> Result<Literal, LoskError> {
         match expr {
-            Expr::Assign { name, value } => self.interpret_assign_expr(name, value),
+            Expr::Assign { name, value } => self.visit_assign(name, value),
             Expr::Binary {
                 left,
                 operator,
                 right,
-            } => self.interpret_binary_expr(left, operator, right),
+            } => self.visit_binary(left, operator, right),
             Expr::Call {
                 callee,
                 paren,
                 args,
-            } => self.interpret_call_expr(callee, paren, args),
-            Expr::Get { .. } => {
-                todo!()
-            }
-            Expr::Grouping { expression } => self.interpret_expr(expression),
+            } => self.visit_call(callee, paren, args),
+            Expr::Get { object, name } => self.visit_get(object, name),
+            Expr::Grouping { expression } => self.visit_grouping(expression),
             Expr::Literal { value } => Ok(value.clone()),
             Expr::Logical {
                 left,
                 operator,
                 right,
-            } => self.interpret_logical_expr(left, operator, right),
-            Expr::Unary { operator, right } => self.interpret_unary_expr(operator, right),
-            Expr::Variable { name } => self.interpret_variable_expr(name),
+            } => self.visit_logical(left, operator, right),
+            Expr::Unary { operator, right } => self.visit_unary(operator, right),
+            Expr::Variable { name } => self.visit_variable(name),
         }
     }
+}
+
+impl ExprVisitor for Interpreter {
+    type Item = Literal;
 
     // TODO: This will need to be modified when resolver is implemented since we need to assign to
     //   correct variable
-    fn interpret_assign_expr(&mut self, name: &Token, value: &Expr) -> Result<Literal, LoskError> {
+    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Literal, LoskError> {
         let value = self.interpret_expr(value)?;
         match self.env.borrow_mut().assign(&name.lexeme, value.clone()) {
             Ok(_) => Ok(value),
@@ -197,7 +110,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_binary_expr(
+    fn visit_binary(
         &mut self,
         left: &Expr,
         operator: &Token,
@@ -276,11 +189,11 @@ impl Interpreter {
         }
     }
 
-    fn interpret_call_expr(
+    fn visit_call(
         &mut self,
         callee: &Expr,
         paren: &Token,
-        args: &Vec<Expr>,
+        args: &[Expr],
     ) -> Result<Literal, LoskError> {
         let callee = self.interpret_expr(callee)?;
         let mut evaluated_args = Vec::new();
@@ -310,7 +223,19 @@ impl Interpreter {
         }
     }
 
-    fn interpret_logical_expr(
+    fn visit_get(&mut self, object: &Expr, name: &Token) -> Result<Self::Item, LoskError> {
+        todo!()
+    }
+
+    fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, LoskError> {
+        self.interpret_expr(expression)
+    }
+
+    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, LoskError> {
+        Ok(value.clone())
+    }
+
+    fn visit_logical(
         &mut self,
         left: &Expr,
         operator: &Token,
@@ -348,11 +273,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_unary_expr(
-        &mut self,
-        operator: &Token,
-        right: &Expr,
-    ) -> Result<Literal, LoskError> {
+    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Literal, LoskError> {
         let right = self.interpret_expr(right)?;
         match (operator.ty, right) {
             (Type::Minus, Literal::Num(val)) => Ok(Literal::from(-val)),
@@ -364,7 +285,7 @@ impl Interpreter {
         }
     }
 
-    fn interpret_variable_expr(&mut self, name: &Token) -> Result<Literal, LoskError> {
+    fn visit_variable(&mut self, name: &Token) -> Result<Literal, LoskError> {
         if let Some(value) = self.env.borrow_mut().get(&name.lexeme) {
             Ok(value)
         } else {
@@ -373,6 +294,96 @@ impl Interpreter {
                 &format!("Use of undefined variable '{}'.", name.lexeme),
             ))
         }
+    }
+}
+
+impl StmtVisitor for Interpreter {
+    type Item = ();
+
+    fn visit_block(&mut self, statements: &[Stmt]) -> Result<(), LoskError> {
+        let current = self.env.clone();
+        self.env = Rc::new(RefCell::new(Environment::with(current.clone())));
+        for stmt in statements {
+            if let err @ Err(_) = self.interpret_stmt(stmt) {
+                self.env = current;
+                return err;
+            }
+        }
+        self.env = current;
+        Ok(())
+    }
+
+    fn visit_expression(&mut self, expression: &Expr) -> Result<Self::Item, LoskError> {
+        self.interpret_expr(expression)?;
+        Ok(())
+    }
+
+    fn visit_function(
+        &mut self,
+        name: &Token,
+        params: &[Token],
+        body: &[Stmt],
+    ) -> Result<Self::Item, LoskError> {
+        todo!()
+    }
+
+    fn visit_class(&mut self, name: &Token, methods: &[Stmt]) -> Result<Self::Item, LoskError> {
+        todo!()
+    }
+
+    fn visit_if(
+        &mut self,
+        expression: &Expr,
+        token: &Token,
+        then_branch: &Stmt,
+        else_branch: &Stmt,
+    ) -> Result<(), LoskError> {
+        let value = self.interpret_expr(expression)?;
+        match value {
+            Literal::Bool(true) => self.interpret_stmt(then_branch),
+            Literal::Bool(false) => self.interpret_stmt(else_branch),
+            _ => Err(LoskError::runtime_error(
+                token,
+                "If condition must be a boolean expression.",
+            )),
+        }
+    }
+
+    fn visit_while(
+        &mut self,
+        condition: &Expr,
+        body: &Stmt,
+        token: &Token,
+    ) -> Result<(), LoskError> {
+        loop {
+            match self.interpret_expr(condition) {
+                Ok(Literal::Bool(true)) => self.interpret_stmt(body)?,
+                Ok(Literal::Bool(false)) => return Ok(()),
+                Err(err) => return Err(err),
+                _ => {
+                    return Err(LoskError::runtime_error(
+                        token,
+                        "While condition must be a boolean expression.",
+                    ))
+                }
+            }
+        }
+    }
+
+    fn visit_print(&mut self, expression: &Expr) -> Result<(), LoskError> {
+        let value = self.interpret_expr(expression)?;
+        writeln!(self.stdout.borrow_mut(), "{}", value).unwrap();
+        Ok(())
+    }
+
+    fn visit_return(&mut self, keyword: &Token, value: &Expr) -> Result<Self::Item, LoskError> {
+        todo!()
+    }
+
+    fn visit_var(&mut self, name: &Token, expression: &Expr) -> Result<(), LoskError> {
+        let value = self.interpret_expr(expression)?;
+        self.env.borrow_mut().define(&name.lexeme, value);
+        Ok(())
     }
 }
 
@@ -385,6 +396,7 @@ mod tests {
     use crate::errors::LoskError;
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
+    use crate::resolver::Resolver;
     use crate::scanner::Scanner;
 
     fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
@@ -395,7 +407,10 @@ mod tests {
         let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
 
         let mut interpreter = Interpreter::new(output.clone());
-        let result = interpreter.interpret(&parser.parse().unwrap());
+        let resolver = Resolver::new();
+        let parsed = parser.parse().unwrap();
+        let resolved = resolver.resolve(parsed);
+        let result = interpreter.interpret(&resolved);
 
         match (result, err) {
             (Err(LoskError::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
