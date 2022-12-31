@@ -1,6 +1,7 @@
 use crate::ast::{Expr, Stmt};
 use crate::errors::LoskError;
 use crate::token::{Token, Type};
+use std::rc::Rc;
 
 pub struct Parser<'a> {
     tokens: &'a Vec<Token>,
@@ -121,7 +122,7 @@ impl<'a> Parser<'a> {
         self.consume(Type::SemiColon, "Expect ';' after variable declaration.")?;
         Ok(Stmt::Var {
             name,
-            init: Box::new(init),
+            init: Rc::new(init),
         })
     }
 
@@ -158,7 +159,7 @@ impl<'a> Parser<'a> {
         let expr = self.expression()?;
         self.consume(Type::SemiColon, "Expect ';' after expression.")?;
         Ok(Stmt::Expression {
-            expression: Box::new(expr),
+            expression: Rc::new(expr),
         })
     }
 
@@ -487,8 +488,8 @@ mod tests {
     use crate::token::{Literal, Token, Type};
 
     macro_rules! token {
-        ($ty:ident, $lex:literal) => {
-            Token::new(Type::$ty, String::from($lex), 0, Literal::Nil)
+        ($ty:ident, $lex:literal, $col:literal) => {
+            Token::new(Type::$ty, String::from($lex), 0, $col, Literal::Nil)
         };
     }
 
@@ -500,7 +501,7 @@ mod tests {
                 "3 < 4;",
                 Stmt::expression(Expr::binary(
                     Expr::literal(3),
-                    token!(Less, "<"),
+                    token!(Less, "<", 2),
                     Expr::literal(4),
                 )),
             ),
@@ -510,15 +511,15 @@ mod tests {
                 Stmt::expression(Expr::binary(
                     Expr::binary(
                         Expr::literal(1),
-                        token!(Plus, "+"),
+                        token!(Plus, "+", 2),
                         Expr::grouping(Expr::binary(
                             Expr::literal("hello"),
-                            token!(Minus, "-"),
+                            token!(Minus, "-", 13),
                             Expr::literal(4),
                         )),
                     ),
-                    token!(Minus, "-"),
-                    Expr::variable(token!(Identifier, "foo")),
+                    token!(Minus, "-", 18),
+                    Expr::variable(token!(Identifier, "foo", 20)),
                 )),
             ),
             // logical expression
@@ -526,7 +527,7 @@ mod tests {
                 "true and false;", // logical or expressions
                 Stmt::expression(Expr::logical(
                     Expr::literal(true),
-                    token!(And, "and"),
+                    token!(And, "and", 5),
                     Expr::literal(false),
                 )),
             ),
@@ -537,13 +538,13 @@ mod tests {
                     Expr::grouping(Expr::binary(
                         Expr::grouping(Expr::binary(
                             Expr::literal(1),
-                            token!(Plus, "+"),
+                            token!(Plus, "+", 4),
                             Expr::literal(2),
                         )),
-                        token!(Slash, "/"),
+                        token!(Slash, "/", 9),
                         Expr::literal(4),
                     )),
-                    token!(Star, "*"),
+                    token!(Star, "*", 14),
                     Expr::literal(10),
                 )),
             ),
@@ -552,7 +553,7 @@ mod tests {
                 "print 1 + 2;",
                 Stmt::print(Expr::binary(
                     Expr::literal(1),
-                    token!(Plus, "+"),
+                    token!(Plus, "+", 8),
                     Expr::literal(2),
                 )),
             ),

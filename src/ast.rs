@@ -1,5 +1,6 @@
 use crate::errors::LoskError;
 use crate::token::{Literal, Token};
+use std::rc::Rc;
 
 // Currently tokens are cloned in every creation (stmt or expr) because they are not that
 // expensive to do so, and the cloning are done during parsing stage only.
@@ -191,13 +192,13 @@ impl Expr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Stmt {
     Block {
         statements: Vec<Stmt>,
     },
     Expression {
-        expression: Box<Expr>,
+        expression: Rc<Expr>,
     },
     Function {
         name: Token,
@@ -209,26 +210,26 @@ pub(crate) enum Stmt {
         methods: Vec<Stmt>, // only Functions are allowed here
     },
     If {
-        expression: Box<Expr>,
+        expression: Rc<Expr>,
         token: Token,
-        then_branch: Box<Stmt>,
-        else_branch: Box<Stmt>,
+        then_branch: Rc<Stmt>,
+        else_branch: Rc<Stmt>,
     },
     While {
-        condition: Box<Expr>,
-        body: Box<Stmt>,
+        condition: Rc<Expr>,
+        body: Rc<Stmt>,
         token: Token,
     },
     Print {
-        expression: Box<Expr>,
+        expression: Rc<Expr>,
     },
     Return {
         keyword: Token,
-        value: Box<Expr>,
+        value: Rc<Expr>,
     },
     Var {
         name: Token,
-        init: Box<Expr>,
+        init: Rc<Expr>,
     },
 }
 
@@ -312,7 +313,7 @@ impl Stmt {
 
     pub(crate) fn expression(expression: Expr) -> Self {
         Stmt::Expression {
-            expression: Box::new(expression),
+            expression: Rc::new(expression),
         }
     }
 
@@ -333,24 +334,24 @@ impl Stmt {
         else_branch: Stmt,
     ) -> Self {
         Stmt::If {
-            expression: Box::new(expression),
+            expression: Rc::new(expression),
             token,
-            then_branch: Box::new(then_branch),
-            else_branch: Box::new(else_branch),
+            then_branch: Rc::new(then_branch),
+            else_branch: Rc::new(else_branch),
         }
     }
 
     pub(crate) fn while_(condition: Expr, body: Stmt, token: Token) -> Self {
         Stmt::While {
-            condition: Box::new(condition),
-            body: Box::new(body),
+            condition: Rc::new(condition),
+            body: Rc::new(body),
             token,
         }
     }
 
     pub(crate) fn print(expression: Expr) -> Self {
         Stmt::Print {
-            expression: Box::new(expression),
+            expression: Rc::new(expression),
         }
     }
 
@@ -358,7 +359,7 @@ impl Stmt {
     pub(crate) fn return_(keyword: Token, value: Expr) -> Self {
         Stmt::Return {
             keyword,
-            value: Box::new(value),
+            value: Rc::new(value),
         }
     }
 
@@ -366,7 +367,7 @@ impl Stmt {
     pub(crate) fn var(name: Token, init: Expr) -> Self {
         Stmt::Var {
             name,
-            init: Box::new(init),
+            init: Rc::new(init),
         }
     }
 }

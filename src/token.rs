@@ -140,15 +140,17 @@ pub struct Token {
     pub(crate) ty: Type,
     pub(crate) lexeme: String,
     pub(crate) line: usize,
+    pub(crate) col: usize,
     pub(crate) value: Literal,
 }
 
 impl Token {
-    pub(crate) fn new(ty: Type, lexeme: String, line: usize, value: Literal) -> Self {
+    pub(crate) fn new(ty: Type, lexeme: String, line: usize, col: usize, value: Literal) -> Self {
         Token {
             ty,
             lexeme,
             line,
+            col,
             value,
         }
     }

@@ -82,7 +82,7 @@ impl<'a> Resolver<'a> {
     fn resolve_local(&mut self, expr: &Expr, token: &Token) {
         for i in (0..self.scopes.len()).rev() {
             if self.scopes[i].contains_key(&token.lexeme) {
-                self.interpreter.resolve(expr, self.scopes.len() - 1 - i);
+                self.interpreter.resolve(token, self.scopes.len() - 1 - i);
                 return;
             }
         }

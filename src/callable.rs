@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Stmt};
+use crate::ast::Stmt;
 use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::interpreter::Interpreter;
@@ -62,63 +62,34 @@ impl Callable for Native {
     }
 }
 
-impl Callable for Stmt {
-    fn name(&self) -> &str {
-        if let Stmt::Function { name, .. } = self {
-            &name.lexeme
-        } else {
-            panic!()
-        }
-    }
-
-    fn arity(&self) -> usize {
-        if let Stmt::Function { params, .. } = self {
-            params.len()
-        } else {
-            panic!()
-        }
-    }
-
-    fn execute(
-        &self,
-        interpreter: &mut Interpreter,
-        args: &[Literal],
-    ) -> Result<Literal, LoskError> {
-        let mut env = Environment::with(self.closure.clone());
-        for (param, arg) in self.params.iter().zip(args) {
-            env.define(&param.lexeme, arg.clone());
-        }
-
-        // TODO: Return type??
-        interpreter.execute_block_with_env(self.body, Rc::new(RefCell::new(env)))?;
-        Ok(Literal::Nil)
-    }
-}
-
-pub(crate) struct Function<'a> {
+pub(crate) struct Function {
     closure: Rc<RefCell<Environment>>,
-    name: &'a Token,
-    params: &'a [Token],
-    body: &'a [Stmt],
+    name: Token,
+    params: Vec<Token>,
+    body: Vec<Stmt>,
 }
 
-impl<'a> Function<'a> {
+impl Function {
+    // This can be wasteful because I am storing the statements in the body. Maybe it would be
+    // better if an Rc instead of a reference is used? That way the functions can just refer to the
+    // statements as pointers. But locality is lost since now the statements (and expressions)
+    // are just pointers to another place in heap.
     pub(crate) fn new(
         closure: Rc<RefCell<Environment>>,
-        name: &'a Token,
-        params: &'a [Token],
-        body: &'a [Stmt],
+        name: &Token,
+        params: &[Token],
+        body: &[Stmt],
     ) -> Self {
         Function {
             closure,
-            name,
-            params,
-            body,
+            name: name.clone(),
+            params: Vec::from(params),
+            body: Vec::from(body),
         }
     }
 }
 
-impl<'a> Callable for Function<'a> {
+impl Callable for Function {
     fn name(&self) -> &str {
         &self.name.lexeme
     }
@@ -138,7 +109,7 @@ impl<'a> Callable for Function<'a> {
         }
 
         // TODO: Return type??
-        interpreter.execute_block_with_env(self.body, Rc::new(RefCell::new(env)))?;
+        interpreter.execute_block_with_env(&self.body, Rc::new(RefCell::new(env)))?;
         Ok(Literal::Nil)
     }
 }

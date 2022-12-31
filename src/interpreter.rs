@@ -15,10 +15,10 @@ pub struct Interpreter {
     globals: Rc<RefCell<Environment>>,
     env: Rc<RefCell<Environment>>,
 
-    // Probably not a good idea to use pointer in a hashmap, a better idea would be to store the
-    // location of the expression (maybe in the source code?)
-    // TODO
-    locals: HashMap<*const Expr, usize>,
+    // TODO: Revisit this. Storing the tokens as key is not space efficient as token contains the
+    //       whole lexeme which can be long and variable access can be plenty. Something like a
+    //       source location should be enough, a tuple like (line, column).
+    locals: HashMap<Token, usize>,
     stdout: Rc<RefCell<dyn Write>>,
 }
 
@@ -71,12 +71,12 @@ impl Interpreter {
         Ok(())
     }
 
-    pub(crate) fn resolve(&mut self, expr: *const Expr, depth: usize) {
-        self.locals.insert(expr, depth);
+    pub(crate) fn resolve(&mut self, token: &Token, depth: usize) {
+        self.locals.insert(token.clone(), depth);
     }
 
-    fn lookup_variable(&self, expr: &Expr, token: &Token) -> Option<Literal> {
-        match self.locals.get(&(expr as *const Expr)) {
+    fn lookup_variable(&self, token: &Token) -> Option<Literal> {
+        match self.locals.get(token) {
             None => self.globals.borrow().get(&token.lexeme),
             Some(dist) => self.env.borrow_mut().get_at(*dist, &token.lexeme),
         }
@@ -94,7 +94,7 @@ impl ExprVisitor for Interpreter {
     ) -> Result<Literal, LoskError> {
         let value = self.visit_expr(value)?;
 
-        match self.locals.get(&(expr as *const Expr)) {
+        match self.locals.get(name) {
             Some(dist) => {
                 self.env
                     .borrow_mut()
@@ -301,7 +301,7 @@ impl ExprVisitor for Interpreter {
     }
 
     fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Literal, LoskError> {
-        match self.lookup_variable(expr, name) {
+        match self.lookup_variable(name) {
             None => Err(LoskError::runtime_error(
                 name,
                 &format!("Use of undefined variable '{}'.", name.lexeme),
@@ -334,8 +334,7 @@ impl StmtVisitor for Interpreter {
         params: &[Token],
         body: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
-        let function = Function::new(self.env.clone(), name, params, body);
-        let boxed = Rc::new(function);
+        let boxed = Rc::new(Function::new(self.env.clone(), name, params, body));
         let callable = Literal::Callable(boxed);
         self.env.borrow_mut().define(&name.lexeme, callable);
         Ok(())
