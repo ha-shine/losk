@@ -19,6 +19,7 @@ type ExprResult = Result<Expr, LoskError>;
 
 // Function kind to differentiate between normal functions and class methods during parsing
 #[allow(dead_code)]
+#[derive(Debug)]
 enum FunctionKind {
     Function,
     Method,
@@ -69,8 +70,43 @@ impl<'a> Parser<'a> {
         todo!()
     }
 
-    fn function(&mut self, _: FunctionKind) -> StmtResult {
-        todo!()
+    fn function(&mut self, kind: FunctionKind) -> StmtResult {
+        let name = self
+            .consume(Type::Identifier, &format!("Expect {:?} name.", kind))?
+            .clone();
+        self.consume(
+            Type::LeftParen,
+            &format!("Expect '(' after {:?} name.", kind),
+        )?;
+
+        let mut params = Vec::new();
+        if !self.check(Type::RightParen) {
+            loop {
+                if params.len() > 255 {
+                    return Err(LoskError::parser_error(
+                        self.peek(),
+                        "Can't have more than 255 parameters.",
+                    ));
+                }
+
+                params.push(
+                    self.consume(Type::Identifier, "Expect parameter name.")?
+                        .clone(),
+                );
+                if !self.match_one(Type::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(Type::RightParen, "Expect ')' after parameters.")?;
+        self.consume(
+            Type::LeftBrace,
+            &format!("Expect '{{' before {:?} body.", kind),
+        )?;
+
+        let body = self.block()?;
+        Ok(Stmt::function(name, params, body))
     }
 
     fn var_declaration(&mut self) -> StmtResult {
@@ -421,6 +457,7 @@ impl<'a> Parser<'a> {
     fn previous(&self) -> &Token {
         &self.tokens[self.current - 1]
     }
+
     fn match_either(&mut self, types: &[Type]) -> bool {
         for ty in types {
             if self.match_one(*ty) {
