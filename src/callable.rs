@@ -108,8 +108,10 @@ impl Callable for Function {
             env.define(&param.lexeme, arg.clone());
         }
 
-        // TODO: Return type??
-        interpreter.execute_block_with_env(&self.body, Rc::new(RefCell::new(env)))?;
-        Ok(Literal::Nil)
+        match interpreter.execute_block_with_env(&self.body, Rc::new(RefCell::new(env))) {
+            Ok(()) => Ok(Literal::Nil),
+            Err(LoskError::Return(value)) => Ok(value.value),
+            Err(err) => Err(err),
+        }
     }
 }

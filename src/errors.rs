@@ -1,4 +1,4 @@
-use crate::token::Token;
+use crate::token::{Literal, Token};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
@@ -18,6 +18,14 @@ pub enum LoskError {
 
     #[error("{:?}", msg)]
     RuntimeError { token: Token, msg: String },
+
+    #[error("return value")]
+    Return(ReturnValue),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct ReturnValue {
+    pub(crate) value: Literal,
 }
 
 impl LoskError {
@@ -34,5 +42,9 @@ impl LoskError {
             token: token.clone(),
             msg: String::from(msg),
         }
+    }
+
+    pub(crate) fn return_value(value: Literal) -> Self {
+        LoskError::Return(ReturnValue { value })
     }
 }

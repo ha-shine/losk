@@ -174,13 +174,8 @@ impl<'a> StmtVisitor for Resolver<'a> {
         self.visit_expr(expression)
     }
 
-    fn visit_return(
-        &mut self,
-        _: &Stmt,
-        keyword: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, LoskError> {
-        todo!()
+    fn visit_return(&mut self, _: &Stmt, _: &Token, value: &Expr) -> Result<Self::Item, LoskError> {
+        self.visit_expr(value)
     }
 
     fn visit_var(&mut self, _: &Stmt, name: &Token, init: &Expr) -> Result<Self::Item, LoskError> {

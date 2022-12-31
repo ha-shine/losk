@@ -402,7 +402,8 @@ impl StmtVisitor for Interpreter {
         keyword: &Token,
         value: &Expr,
     ) -> Result<Self::Item, LoskError> {
-        todo!()
+        let value = self.visit_expr(value)?;
+        Err(LoskError::return_value(value))
     }
 
     fn visit_var(&mut self, expr: &Stmt, name: &Token, expression: &Expr) -> Result<(), LoskError> {
@@ -488,6 +489,14 @@ mod tests {
             (
                 include_str!("../data/binding.lox"),
                 include_str!("../data/binding.lox.expected"),
+            ),
+            (
+                include_str!("../data/fib.lox"),
+                include_str!("../data/fib.lox.expected"),
+            ),
+            (
+                include_str!("../data/make_counter.lox"),
+                include_str!("../data/make_counter.lox.expected"),
             ),
         ];
 

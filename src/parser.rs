@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Stmt};
 use crate::errors::LoskError;
-use crate::token::{Token, Type};
+use crate::token::{Literal, Token, Type};
 use std::rc::Rc;
 
 pub struct Parser<'a> {
@@ -230,7 +230,14 @@ impl<'a> Parser<'a> {
     }
 
     fn return_statement(&mut self) -> StmtResult {
-        todo!()
+        let keyword = self.previous().clone();
+        let mut value = Expr::nil();
+        if !self.check(Type::SemiColon) {
+            value = self.expression()?;
+        }
+
+        self.consume(Type::SemiColon, "Expect ';' after return value.")?;
+        Ok(Stmt::return_(keyword, value))
     }
 
     fn expression(&mut self) -> ExprResult {
