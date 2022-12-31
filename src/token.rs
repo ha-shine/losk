@@ -1,9 +1,10 @@
 use crate::callable::Callable;
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::ptr;
 use std::rc::Rc;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub enum Type {
     LeftParen,
     RightParen,
@@ -74,6 +75,20 @@ impl PartialEq for Literal {
     }
 }
 
+impl Eq for Literal {}
+
+impl Hash for Literal {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Literal::Callable(ptr) => Rc::as_ptr(ptr).hash(state),
+            Literal::Str(val) => val.hash(state),
+            Literal::Num(val) => val.to_bits().hash(state),
+            Literal::Bool(val) => val.hash(state),
+            Literal::Nil => 0.hash(state),
+        }
+    }
+}
+
 impl From<bool> for Literal {
     fn from(value: bool) -> Self {
         Literal::Bool(value)
@@ -120,20 +135,22 @@ macro_rules! impl_from_num_for_literal {
 
 impl_from_num_for_literal!(u8 i8 u16 i16 u32 i32 u64 i64 u128 i128 usize isize f32 f64);
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Token {
     pub(crate) ty: Type,
     pub(crate) lexeme: String,
     pub(crate) line: usize,
+    pub(crate) col: usize,
     pub(crate) value: Literal,
 }
 
 impl Token {
-    pub(crate) fn new(ty: Type, lexeme: String, line: usize, value: Literal) -> Self {
+    pub(crate) fn new(ty: Type, lexeme: String, line: usize, col: usize, value: Literal) -> Self {
         Token {
             ty,
             lexeme,
             line,
+            col,
             value,
         }
     }

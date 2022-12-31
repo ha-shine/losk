@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+#[derive(Debug)]
 pub(crate) struct Environment {
     enclosing: Option<Rc<RefCell<Environment>>>,
     values: HashMap<String, Literal>,
@@ -70,6 +71,7 @@ impl Environment {
         value: Literal,
     ) -> Result<(), UndefinedVariable> {
         if dist == 0 {
+            dbg!(&self.values);
             if let Some(val) = self.values.get_mut(key) {
                 *val = value;
                 Ok(())

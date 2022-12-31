@@ -1,6 +1,7 @@
 use crate::ast::{Expr, Stmt};
 use crate::errors::LoskError;
-use crate::token::{Token, Type};
+use crate::token::{Literal, Token, Type};
+use std::rc::Rc;
 
 pub struct Parser<'a> {
     tokens: &'a Vec<Token>,
@@ -19,6 +20,7 @@ type ExprResult = Result<Expr, LoskError>;
 
 // Function kind to differentiate between normal functions and class methods during parsing
 #[allow(dead_code)]
+#[derive(Debug)]
 enum FunctionKind {
     Function,
     Method,
@@ -69,8 +71,43 @@ impl<'a> Parser<'a> {
         todo!()
     }
 
-    fn function(&mut self, _: FunctionKind) -> StmtResult {
-        todo!()
+    fn function(&mut self, kind: FunctionKind) -> StmtResult {
+        let name = self
+            .consume(Type::Identifier, &format!("Expect {:?} name.", kind))?
+            .clone();
+        self.consume(
+            Type::LeftParen,
+            &format!("Expect '(' after {:?} name.", kind),
+        )?;
+
+        let mut params = Vec::new();
+        if !self.check(Type::RightParen) {
+            loop {
+                if params.len() > 255 {
+                    return Err(LoskError::parser_error(
+                        self.peek(),
+                        "Can't have more than 255 parameters.",
+                    ));
+                }
+
+                params.push(
+                    self.consume(Type::Identifier, "Expect parameter name.")?
+                        .clone(),
+                );
+                if !self.match_one(Type::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(Type::RightParen, "Expect ')' after parameters.")?;
+        self.consume(
+            Type::LeftBrace,
+            &format!("Expect '{{' before {:?} body.", kind),
+        )?;
+
+        let body = self.block()?;
+        Ok(Stmt::function(name, params, body))
     }
 
     fn var_declaration(&mut self) -> StmtResult {
@@ -85,7 +122,7 @@ impl<'a> Parser<'a> {
         self.consume(Type::SemiColon, "Expect ';' after variable declaration.")?;
         Ok(Stmt::Var {
             name,
-            init: Box::new(init),
+            init: Rc::new(init),
         })
     }
 
@@ -122,7 +159,7 @@ impl<'a> Parser<'a> {
         let expr = self.expression()?;
         self.consume(Type::SemiColon, "Expect ';' after expression.")?;
         Ok(Stmt::Expression {
-            expression: Box::new(expr),
+            expression: Rc::new(expr),
         })
     }
 
@@ -193,7 +230,14 @@ impl<'a> Parser<'a> {
     }
 
     fn return_statement(&mut self) -> StmtResult {
-        todo!()
+        let keyword = self.previous().clone();
+        let mut value = Expr::nil();
+        if !self.check(Type::SemiColon) {
+            value = self.expression()?;
+        }
+
+        self.consume(Type::SemiColon, "Expect ';' after return value.")?;
+        Ok(Stmt::return_(keyword, value))
     }
 
     fn expression(&mut self) -> ExprResult {
@@ -421,6 +465,7 @@ impl<'a> Parser<'a> {
     fn previous(&self) -> &Token {
         &self.tokens[self.current - 1]
     }
+
     fn match_either(&mut self, types: &[Type]) -> bool {
         for ty in types {
             if self.match_one(*ty) {
@@ -450,8 +495,8 @@ mod tests {
     use crate::token::{Literal, Token, Type};
 
     macro_rules! token {
-        ($ty:ident, $lex:literal) => {
-            Token::new(Type::$ty, String::from($lex), 0, Literal::Nil)
+        ($ty:ident, $lex:literal, $col:literal) => {
+            Token::new(Type::$ty, String::from($lex), 0, $col, Literal::Nil)
         };
     }
 
@@ -463,7 +508,7 @@ mod tests {
                 "3 < 4;",
                 Stmt::expression(Expr::binary(
                     Expr::literal(3),
-                    token!(Less, "<"),
+                    token!(Less, "<", 2),
                     Expr::literal(4),
                 )),
             ),
@@ -473,15 +518,15 @@ mod tests {
                 Stmt::expression(Expr::binary(
                     Expr::binary(
                         Expr::literal(1),
-                        token!(Plus, "+"),
+                        token!(Plus, "+", 2),
                         Expr::grouping(Expr::binary(
                             Expr::literal("hello"),
-                            token!(Minus, "-"),
+                            token!(Minus, "-", 13),
                             Expr::literal(4),
                         )),
                     ),
-                    token!(Minus, "-"),
-                    Expr::variable(token!(Identifier, "foo")),
+                    token!(Minus, "-", 18),
+                    Expr::variable(token!(Identifier, "foo", 20)),
                 )),
             ),
             // logical expression
@@ -489,7 +534,7 @@ mod tests {
                 "true and false;", // logical or expressions
                 Stmt::expression(Expr::logical(
                     Expr::literal(true),
-                    token!(And, "and"),
+                    token!(And, "and", 5),
                     Expr::literal(false),
                 )),
             ),
@@ -500,13 +545,13 @@ mod tests {
                     Expr::grouping(Expr::binary(
                         Expr::grouping(Expr::binary(
                             Expr::literal(1),
-                            token!(Plus, "+"),
+                            token!(Plus, "+", 4),
                             Expr::literal(2),
                         )),
-                        token!(Slash, "/"),
+                        token!(Slash, "/", 9),
                         Expr::literal(4),
                     )),
-                    token!(Star, "*"),
+                    token!(Star, "*", 14),
                     Expr::literal(10),
                 )),
             ),
@@ -515,7 +560,7 @@ mod tests {
                 "print 1 + 2;",
                 Stmt::print(Expr::binary(
                     Expr::literal(1),
-                    token!(Plus, "+"),
+                    token!(Plus, "+", 8),
                     Expr::literal(2),
                 )),
             ),

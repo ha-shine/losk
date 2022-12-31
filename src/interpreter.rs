@@ -1,17 +1,24 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::io::Write;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
-use crate::callable::{BoxedFunction, NativeCallable};
+use crate::callable::{BoxedFunction, Function, Native};
 use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::resolver::ResolvedStmts;
 use crate::token::{Literal, Token, Type};
 
 pub struct Interpreter {
+    globals: Rc<RefCell<Environment>>,
     env: Rc<RefCell<Environment>>,
+
+    // TODO: Revisit this. Storing the tokens as key is not space efficient as token contains the
+    //       whole lexeme which can be long and variable access can be plenty. Something like a
+    //       source location should be enough, a tuple like (line, column).
+    locals: HashMap<Token, usize>,
     stdout: Rc<RefCell<dyn Write>>,
 }
 
@@ -27,69 +34,51 @@ impl Interpreter {
             writeln!(clock_out.borrow_mut(), "{:?}\n", since_epoch).unwrap();
             Ok(Literal::Nil)
         });
-        let clock_callable = NativeCallable::new(clock, String::from("clock"), 0);
+        let clock_callable = Native::new(clock, String::from("clock"), 0);
         globals
             .borrow_mut()
             .define("clock", Literal::Callable(Rc::new(clock_callable)));
 
-        let env = Rc::new(RefCell::new(Environment::with(globals)));
-
-        Interpreter { env, stdout }
+        Interpreter {
+            env: globals.clone(),
+            globals,
+            locals: HashMap::new(),
+            stdout,
+        }
     }
 
     pub fn interpret(&mut self, resolved: &ResolvedStmts) -> Result<(), LoskError> {
-        for stmt in &resolved.stmts {
-            self.interpret_stmt(stmt)?;
+        for stmt in &resolved.0 {
+            self.visit_stmt(stmt)?;
         }
         Ok(())
     }
 
-    fn interpret_stmt(&mut self, stmt: &Stmt) -> Result<(), LoskError> {
-        match stmt {
-            Stmt::Expression { expression } => self.visit_expression(expression),
-            Stmt::Block { statements } => self.visit_block(statements),
-            Stmt::Function { name, params, body } => self.visit_function(name, params, body),
-            Stmt::Class { name, methods } => self.visit_class(name, methods),
-            Stmt::If {
-                expression,
-                token,
-                then_branch,
-                else_branch,
-            } => self.visit_if(expression, token, then_branch, else_branch),
-            Stmt::While {
-                condition,
-                body,
-                token,
-            } => self.visit_while(condition, body, token),
-            Stmt::Print { expression } => self.visit_print(expression),
-            Stmt::Return { keyword, value } => self.visit_return(keyword, value),
-            Stmt::Var { name, init } => self.visit_var(name, init),
+    pub(crate) fn execute_block_with_env(
+        &mut self,
+        stmts: &[Stmt],
+        env: Rc<RefCell<Environment>>,
+    ) -> Result<(), LoskError> {
+        let current = self.env.clone();
+        self.env = env;
+        for stmt in stmts {
+            if let err @ Err(_) = self.visit_stmt(stmt) {
+                self.env = current;
+                return err;
+            }
         }
+        self.env = current;
+        Ok(())
     }
 
-    fn interpret_expr(&mut self, expr: &Expr) -> Result<Literal, LoskError> {
-        match expr {
-            Expr::Assign { name, value } => self.visit_assign(name, value),
-            Expr::Binary {
-                left,
-                operator,
-                right,
-            } => self.visit_binary(left, operator, right),
-            Expr::Call {
-                callee,
-                paren,
-                args,
-            } => self.visit_call(callee, paren, args),
-            Expr::Get { object, name } => self.visit_get(object, name),
-            Expr::Grouping { expression } => self.visit_grouping(expression),
-            Expr::Literal { value } => Ok(value.clone()),
-            Expr::Logical {
-                left,
-                operator,
-                right,
-            } => self.visit_logical(left, operator, right),
-            Expr::Unary { operator, right } => self.visit_unary(operator, right),
-            Expr::Variable { name } => self.visit_variable(name),
+    pub(crate) fn resolve(&mut self, token: &Token, depth: usize) {
+        self.locals.insert(token.clone(), depth);
+    }
+
+    fn lookup_variable(&self, token: &Token) -> Option<Literal> {
+        match self.locals.get(token) {
+            None => self.globals.borrow().get(&token.lexeme),
+            Some(dist) => self.env.borrow_mut().get_at(*dist, &token.lexeme),
         }
     }
 }
@@ -97,27 +86,41 @@ impl Interpreter {
 impl ExprVisitor for Interpreter {
     type Item = Literal;
 
-    // TODO: This will need to be modified when resolver is implemented since we need to assign to
-    //   correct variable
-    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Literal, LoskError> {
-        let value = self.interpret_expr(value)?;
-        match self.env.borrow_mut().assign(&name.lexeme, value.clone()) {
-            Ok(_) => Ok(value),
-            Err(_) => Err(LoskError::runtime_error(
-                name,
-                &format!("Undefined variable '{}'.", &name.lexeme),
-            )),
+    fn visit_assign(
+        &mut self,
+        expr: &Expr,
+        name: &Token,
+        value: &Expr,
+    ) -> Result<Literal, LoskError> {
+        let value = self.visit_expr(value)?;
+
+        match self.locals.get(name) {
+            Some(dist) => {
+                self.env
+                    .borrow_mut()
+                    .assign_at(*dist, &name.lexeme, value.clone())
+                    .unwrap();
+            }
+            None => {
+                self.globals
+                    .borrow_mut()
+                    .assign(&name.lexeme, value.clone())
+                    .unwrap();
+            }
         }
+
+        Ok(value)
     }
 
     fn visit_binary(
         &mut self,
+        expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
     ) -> Result<Literal, LoskError> {
-        let left = self.interpret_expr(left)?;
-        let right = self.interpret_expr(right)?;
+        let left = self.visit_expr(left)?;
+        let right = self.visit_expr(right)?;
 
         match operator.ty {
             Type::Minus => match (left, right) {
@@ -191,14 +194,15 @@ impl ExprVisitor for Interpreter {
 
     fn visit_call(
         &mut self,
+        expr: &Expr,
         callee: &Expr,
         paren: &Token,
         args: &[Expr],
     ) -> Result<Literal, LoskError> {
-        let callee = self.interpret_expr(callee)?;
+        let callee = self.visit_expr(callee)?;
         let mut evaluated_args = Vec::new();
         for arg in args {
-            evaluated_args.push(self.interpret_expr(arg)?);
+            evaluated_args.push(self.visit_expr(arg)?);
         }
 
         match callee {
@@ -223,25 +227,31 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_get(&mut self, object: &Expr, name: &Token) -> Result<Self::Item, LoskError> {
+    fn visit_get(
+        &mut self,
+        expr: &Expr,
+        object: &Expr,
+        name: &Token,
+    ) -> Result<Self::Item, LoskError> {
         todo!()
     }
 
-    fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, LoskError> {
-        self.interpret_expr(expression)
+    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError> {
+        self.visit_expr(expression)
     }
 
-    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, LoskError> {
+    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, LoskError> {
         Ok(value.clone())
     }
 
     fn visit_logical(
         &mut self,
+        expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
     ) -> Result<Literal, LoskError> {
-        let left = match self.interpret_expr(left)? {
+        let left = match self.visit_expr(left)? {
             Literal::Bool(val) => val,
             _ => {
                 return Err(LoskError::runtime_error(
@@ -264,7 +274,7 @@ impl ExprVisitor for Interpreter {
             return Ok(Literal::from(false));
         }
 
-        match self.interpret_expr(right)? {
+        match self.visit_expr(right)? {
             val @ Literal::Bool(_) => Ok(val),
             _ => Err(LoskError::runtime_error(
                 operator,
@@ -273,8 +283,13 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Literal, LoskError> {
-        let right = self.interpret_expr(right)?;
+    fn visit_unary(
+        &mut self,
+        expr: &Expr,
+        operator: &Token,
+        right: &Expr,
+    ) -> Result<Literal, LoskError> {
+        let right = self.visit_expr(right)?;
         match (operator.ty, right) {
             (Type::Minus, Literal::Num(val)) => Ok(Literal::from(-val)),
             (Type::Bang, Literal::Bool(val)) => Ok(Literal::from(!val)),
@@ -285,14 +300,13 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_variable(&mut self, name: &Token) -> Result<Literal, LoskError> {
-        if let Some(value) = self.env.borrow_mut().get(&name.lexeme) {
-            Ok(value)
-        } else {
-            Err(LoskError::runtime_error(
+    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Literal, LoskError> {
+        match self.lookup_variable(name) {
+            None => Err(LoskError::runtime_error(
                 name,
                 &format!("Use of undefined variable '{}'.", name.lexeme),
-            ))
+            )),
+            Some(value) => Ok(value),
         }
     }
 }
@@ -300,48 +314,54 @@ impl ExprVisitor for Interpreter {
 impl StmtVisitor for Interpreter {
     type Item = ();
 
-    fn visit_block(&mut self, statements: &[Stmt]) -> Result<(), LoskError> {
-        let current = self.env.clone();
-        self.env = Rc::new(RefCell::new(Environment::with(current.clone())));
-        for stmt in statements {
-            if let err @ Err(_) = self.interpret_stmt(stmt) {
-                self.env = current;
-                return err;
-            }
-        }
-        self.env = current;
-        Ok(())
+    fn visit_block(&mut self, expr: &Stmt, statements: &[Stmt]) -> Result<(), LoskError> {
+        let env = Rc::new(RefCell::new(Environment::with(self.env.clone())));
+        self.execute_block_with_env(statements, env)
     }
 
-    fn visit_expression(&mut self, expression: &Expr) -> Result<Self::Item, LoskError> {
-        self.interpret_expr(expression)?;
+    fn visit_expression(
+        &mut self,
+        expr: &Stmt,
+        expression: &Expr,
+    ) -> Result<Self::Item, LoskError> {
+        self.visit_expr(expression)?;
         Ok(())
     }
 
     fn visit_function(
         &mut self,
+        expr: &Stmt,
         name: &Token,
         params: &[Token],
         body: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
-        todo!()
+        let boxed = Rc::new(Function::new(self.env.clone(), name, params, body));
+        let callable = Literal::Callable(boxed);
+        self.env.borrow_mut().define(&name.lexeme, callable);
+        Ok(())
     }
 
-    fn visit_class(&mut self, name: &Token, methods: &[Stmt]) -> Result<Self::Item, LoskError> {
+    fn visit_class(
+        &mut self,
+        expr: &Stmt,
+        name: &Token,
+        methods: &[Stmt],
+    ) -> Result<Self::Item, LoskError> {
         todo!()
     }
 
     fn visit_if(
         &mut self,
+        expr: &Stmt,
         expression: &Expr,
         token: &Token,
         then_branch: &Stmt,
         else_branch: &Stmt,
     ) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expression)?;
+        let value = self.visit_expr(expression)?;
         match value {
-            Literal::Bool(true) => self.interpret_stmt(then_branch),
-            Literal::Bool(false) => self.interpret_stmt(else_branch),
+            Literal::Bool(true) => self.visit_stmt(then_branch),
+            Literal::Bool(false) => self.visit_stmt(else_branch),
             _ => Err(LoskError::runtime_error(
                 token,
                 "If condition must be a boolean expression.",
@@ -351,13 +371,14 @@ impl StmtVisitor for Interpreter {
 
     fn visit_while(
         &mut self,
+        expr: &Stmt,
         condition: &Expr,
         body: &Stmt,
         token: &Token,
     ) -> Result<(), LoskError> {
         loop {
-            match self.interpret_expr(condition) {
-                Ok(Literal::Bool(true)) => self.interpret_stmt(body)?,
+            match self.visit_expr(condition) {
+                Ok(Literal::Bool(true)) => self.visit_stmt(body)?,
                 Ok(Literal::Bool(false)) => return Ok(()),
                 Err(err) => return Err(err),
                 _ => {
@@ -370,18 +391,24 @@ impl StmtVisitor for Interpreter {
         }
     }
 
-    fn visit_print(&mut self, expression: &Expr) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expression)?;
+    fn visit_print(&mut self, expr: &Stmt, expression: &Expr) -> Result<(), LoskError> {
+        let value = self.visit_expr(expression)?;
         writeln!(self.stdout.borrow_mut(), "{}", value).unwrap();
         Ok(())
     }
 
-    fn visit_return(&mut self, keyword: &Token, value: &Expr) -> Result<Self::Item, LoskError> {
-        todo!()
+    fn visit_return(
+        &mut self,
+        expr: &Stmt,
+        keyword: &Token,
+        value: &Expr,
+    ) -> Result<Self::Item, LoskError> {
+        let value = self.visit_expr(value)?;
+        Err(LoskError::return_value(value))
     }
 
-    fn visit_var(&mut self, name: &Token, expression: &Expr) -> Result<(), LoskError> {
-        let value = self.interpret_expr(expression)?;
+    fn visit_var(&mut self, expr: &Stmt, name: &Token, expression: &Expr) -> Result<(), LoskError> {
+        let value = self.visit_expr(expression)?;
         self.env.borrow_mut().define(&name.lexeme, value);
         Ok(())
     }
@@ -400,6 +427,8 @@ mod tests {
     use crate::scanner::Scanner;
 
     fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
+        println!("Testing source:\n{}", src);
+
         let mut scanner = Scanner::new(src);
         let tokens = scanner.scan_tokens().unwrap();
 
@@ -407,10 +436,10 @@ mod tests {
         let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
 
         let mut interpreter = Interpreter::new(output.clone());
-        let resolver = Resolver::new();
+        let mut resolver = Resolver::new(&mut interpreter);
         let parsed = parser.parse().unwrap();
         let resolved = resolver.resolve(parsed);
-        let result = interpreter.interpret(&resolved);
+        let result = interpreter.interpret(&resolved.unwrap());
 
         match (result, err) {
             (Err(LoskError::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
@@ -424,6 +453,7 @@ mod tests {
         if let Some(out) = out {
             assert_eq!(str::from_utf8(&output.borrow()).unwrap(), out);
         }
+        println!("\n\n");
     }
 
     #[test]
@@ -456,6 +486,18 @@ mod tests {
             (
                 include_str!("../data/for.lox"),
                 include_str!("../data/for.lox.expected"),
+            ),
+            (
+                include_str!("../data/binding.lox"),
+                include_str!("../data/binding.lox.expected"),
+            ),
+            (
+                include_str!("../data/fib.lox"),
+                include_str!("../data/fib.lox.expected"),
+            ),
+            (
+                include_str!("../data/make_counter.lox"),
+                include_str!("../data/make_counter.lox.expected"),
             ),
         ];
 

@@ -221,7 +221,7 @@ impl<'a> Scanner<'a> {
             _ => String::from(&self.src[self.start..self.current]),
         };
 
-        Token::new(ty, lexeme, self.line, val)
+        Token::new(ty, lexeme, self.line, self.start, val)
     }
 
     fn current(&self) -> char {
@@ -286,24 +286,37 @@ mod tests {
         assert_eq!(
             tokens,
             vec![
-                Token::new(Type::Class, String::from("class"), 0, Literal::Nil),
-                Token::new(Type::Fun, String::from("fun"), 0, Literal::Nil),
-                Token::new(Type::LeftBrace, String::from("{"), 0, Literal::Nil),
-                Token::new(Type::RightBrace, String::from("}"), 0, Literal::Nil),
-                Token::new(Type::Var, String::from("var"), 0, Literal::Nil),
-                Token::new(Type::Identifier, String::from("foo"), 0, Literal::Nil),
-                Token::new(Type::Identifier, String::from("bar"), 0, Literal::Nil),
-                Token::new(Type::Number, String::from("12.45"), 0, Literal::Num(12.45)),
+                Token::new(Type::Class, String::from("class"), 0, 0, Literal::Nil),
+                Token::new(Type::Fun, String::from("fun"), 0, 6, Literal::Nil),
+                Token::new(Type::LeftBrace, String::from("{"), 0, 10, Literal::Nil),
+                Token::new(Type::RightBrace, String::from("}"), 0, 11, Literal::Nil),
+                Token::new(Type::Var, String::from("var"), 0, 13, Literal::Nil),
+                Token::new(Type::Identifier, String::from("foo"), 0, 17, Literal::Nil),
+                Token::new(Type::Identifier, String::from("bar"), 0, 21, Literal::Nil),
+                Token::new(
+                    Type::Number,
+                    String::from("12.45"),
+                    0,
+                    25,
+                    Literal::Num(12.45)
+                ),
                 Token::new(
                     Type::String,
                     String::from("\"hello\""),
                     0,
+                    31,
                     Literal::from("hello")
                 ),
-                Token::new(Type::True, String::from("true"), 0, Literal::Bool(true)),
-                Token::new(Type::False, String::from("false"), 0, Literal::Bool(false)),
-                Token::new(Type::Nil, String::from("nil"), 0, Literal::Nil),
-                Token::new(Type::Eof, String::new(), 0, Literal::Nil),
+                Token::new(Type::True, String::from("true"), 0, 39, Literal::Bool(true)),
+                Token::new(
+                    Type::False,
+                    String::from("false"),
+                    0,
+                    44,
+                    Literal::Bool(false)
+                ),
+                Token::new(Type::Nil, String::from("nil"), 0, 50, Literal::Nil),
+                Token::new(Type::Eof, String::new(), 0, 54, Literal::Nil),
             ]
         );
     }
@@ -318,7 +331,7 @@ mod tests {
 
         assert_eq!(
             tokens,
-            vec![Token::new(Type::Eof, String::new(), 2, Literal::Nil)]
+            vec![Token::new(Type::Eof, String::new(), 2, 0, Literal::Nil)]
         );
     }
 

@@ -1,0 +1,13 @@
+var name = "foo";
+
+fun greet() {
+    fun greeter() {
+        print name;
+    }
+
+    greeter();
+    var name = "bar";
+    greeter();
+}
+
+greet();
