@@ -14,10 +14,6 @@ use crate::token::{Literal, Token, Type};
 pub struct Interpreter {
     globals: Rc<RefCell<Environment>>,
     env: Rc<RefCell<Environment>>,
-
-    // TODO: Revisit this. Storing the tokens as key is not space efficient as token contains the
-    //       whole lexeme which can be long and variable access can be plenty. Something like a
-    //       source location should be enough, a tuple like (line, column).
     locals: HashMap<Token, usize>,
     stdout: Rc<RefCell<dyn Write>>,
 }

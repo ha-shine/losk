@@ -36,3 +36,34 @@ Lowest to highest
 - operator   -> "==" | "!=" | "<" | "<=" | ">" | ">="
               | "+" | "-"  | "*" | "/" ;
 ```
+
+## Todos
+
+There are a few improvements I would like to see in this project, but for the lack of free time I haven't got around to
+them yet.
+
+- [ ] Generate StmtVisitor and ExprVisitor traits using procedural macro. I am not yet familiar enough with 
+      proc-macros to do this task efficiently.
+- [ ] The depths of local variables are stored with Tokens as keys. This can be wasteful since Token contains other
+      metadata that are not useful for the purpose of binding. This can be revisited and use a source location for 
+      better space efficiency (e.g token index, line+column, or even identifier for each token).
+
+### Challenges
+
+And lastly, there are challenges in the book that I haven't gotten around to doing yet. The book encourages to do the
+challenges in a separate branch since the chapters assume that you have not done any modification (including challenges)
+to the code. It would be nice to implement these.
+
+- [ ] Add support for C-style ternary operator (?:), one-liner if clauses
+- [ ] `--verbose` parameter in CLI prompt for extra statistics (like execution time, etc.)
+- [ ] Handle divide by 0 error
+- [ ] `+` operator currently only concatenates or add numbers. Extend it to allow concatenating a number to a string
+- [ ] REPL no longer supports entering single expression, it can be convenient for the user to be able to type expressions
+      and see the results
+- [ ] Add `break` and `continue` statement inside loops
+- [ ] Add support for **anonymous functions** or **lambdas**
+- [ ] Extend resolver to report an error if a local variable is never used
+- [ ] Associate a unique index for each local variable declared in a scope and store that together with the depth.
+      When resolving from interpreter, use that to quickly access the variable. This will be faster than using names.
+- [ ] Rethink about using unique_ptr for statements and expressions
+- [ ] Replace shared_ptr with local_shared_ptr from boost as thread safety is not needed

@@ -233,7 +233,6 @@ pub(crate) enum Stmt {
     },
 }
 
-// TODO: Generate this using procedural macros
 pub(crate) trait StmtVisitor {
     type Item;
 
