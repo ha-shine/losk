@@ -5,6 +5,7 @@ pub mod scanner;
 pub mod token;
 
 pub(crate) mod ast;
-mod callable;
+pub(crate) mod callable;
 pub(crate) mod env;
-mod resolver;
+pub(crate) mod instance;
+pub(crate) mod resolver;

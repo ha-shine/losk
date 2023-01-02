@@ -1,6 +1,7 @@
 use crate::ast::Stmt;
 use crate::env::Environment;
 use crate::errors::LoskError;
+use crate::instance::Instance;
 use crate::interpreter::Interpreter;
 use crate::token::{Literal, Token};
 use std::cell::RefCell;
@@ -10,6 +11,7 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub(crate) enum CallableType {
     Function,
+    Class,
 }
 
 pub(crate) trait Callable {
@@ -20,7 +22,7 @@ pub(crate) trait Callable {
     fn name(&self) -> &str;
     fn arity(&self) -> usize;
     fn execute(
-        &self,
+        self: Rc<Self>,
         interpreter: &mut Interpreter,
         args: &[Literal],
     ) -> Result<Literal, LoskError>;
@@ -57,7 +59,11 @@ impl Callable for Native {
         self.arity
     }
 
-    fn execute(&self, _: &mut Interpreter, args: &[Literal]) -> Result<Literal, LoskError> {
+    fn execute(
+        self: Rc<Self>,
+        _: &mut Interpreter,
+        args: &[Literal],
+    ) -> Result<Literal, LoskError> {
         (self.func)(args)
     }
 }
@@ -90,6 +96,10 @@ impl Function {
 }
 
 impl Callable for Function {
+    fn ty(&self) -> CallableType {
+        CallableType::Function
+    }
+
     fn name(&self) -> &str {
         &self.name.lexeme
     }
@@ -99,7 +109,7 @@ impl Callable for Function {
     }
 
     fn execute(
-        &self,
+        self: Rc<Self>,
         interpreter: &mut Interpreter,
         args: &[Literal],
     ) -> Result<Literal, LoskError> {
@@ -113,5 +123,36 @@ impl Callable for Function {
             Err(LoskError::Return(value)) => Ok(value.value),
             Err(err) => Err(err),
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct Class {
+    name: String,
+}
+
+impl Class {
+    pub(crate) fn new(name: &str) -> Rc<Self> {
+        Rc::new(Class {
+            name: name.to_string(),
+        })
+    }
+}
+
+impl Callable for Class {
+    fn ty(&self) -> CallableType {
+        CallableType::Class
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+
+    fn arity(&self) -> usize {
+        0
+    }
+
+    fn execute(self: Rc<Self>, _: &mut Interpreter, _: &[Literal]) -> Result<Literal, LoskError> {
+        Ok(Literal::Instance(Instance::new(self)))
     }
 }

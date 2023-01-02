@@ -27,6 +27,11 @@ pub(crate) enum Expr {
         object: Box<Expr>,
         name: Token,
     },
+    Set {
+        object: Box<Expr>,
+        name: Token,
+        value: Box<Expr>,
+    },
     Grouping {
         expression: Box<Expr>,
     },
@@ -64,6 +69,7 @@ pub(crate) trait ExprVisitor {
                 args,
             } => self.visit_call(expr, callee, paren, args),
             Expr::Get { object, name } => self.visit_get(expr, object, name),
+            Expr::Set { object, name, value } => self.visit_set(expr, object, name, value),
             Expr::Grouping { expression } => self.visit_grouping(expr, expression),
             Expr::Literal { value } => self.visit_literal(expr, value),
             Expr::Logical {
@@ -100,6 +106,13 @@ pub(crate) trait ExprVisitor {
         expr: &Expr,
         object: &Expr,
         name: &Token,
+    ) -> Result<Self::Item, LoskError>;
+    fn visit_set(
+        &mut self,
+        expr: &Expr,
+        object: &Expr,
+        name: &Token,
+        value: &Expr,
     ) -> Result<Self::Item, LoskError>;
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError>;
     fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, LoskError>;

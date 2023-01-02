@@ -1,0 +1,8 @@
+class Foo {}
+
+var fooObject = Foo();
+print Foo;
+print fooObject;
+
+fooObject.name = "foo object";
+print fooObject.name;

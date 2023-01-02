@@ -19,22 +19,55 @@ Lowest to highest
 
 ## Parser rule table
 
-### Simple rule table
+Each rule matches expression at its precedence level or higher.
+The rules are made intentionally to be right-recursive.
+Terminals are in capital letters.
 
 ```
-- expression -> literal
-              | unary
-              | binary
-              | grouping 
-              | assignment ;
-- assignment -> IDENTIFIER "=" assignment 
-              | equality;
-- literal    -> NUMBER | STRING | "true" | "false" | "nil" ;
-- grouping   -> "(" expression ")" ;
-- unary      -> ( "-" | "!" ) expression ;
-- binary     -> expression operator expression ;
-- operator   -> "==" | "!=" | "<" | "<=" | ">" | ">="
-              | "+" | "-"  | "*" | "/" ;
+
+- program           -> declaration* EOF_ ;
+- declaration       -> class_decl
+                     | fun_decl 
+                     | var_decl
+                     | statement ;
+- class_decl        -> "class" IDENTIFIER "{" function* "}" ;
+- fun_decl          -> "fun" function ;
+- function          -> IDENTIFIER "(" parameters? ")" block ;
+- parameters        -> IDENTIFIER ( "," IDENTIFIER )* ;
+- var_decl          -> "var" IDENTIFIER ( "=" expression )? ";" ;
+- statement         -> expr_statement
+                     | for_statement
+                     | if_statement
+                     | print_statement
+                     | return_statement
+                     | while_statement 
+                     | block ;
+- for_statement     -> "for" "(" ( var_decl | expr_statement | ";" )
+                       expression? ";"
+                       expression? ")" statement ;
+- if_statement      -> "if" "(" expression ")" statement
+                       ( "else" statement )? ;
+- block             -> "{" declaration* "}" ;
+- expr_statement    -> expression ";" ;
+- print_statement   -> "print" expression ";" ;
+- return_statement  -> "return" expression? ";" ;
+- while_statement   -> "while" "(" expression ")" statement ;
+- expression        -> assignment ;
+- assignment        -> ( call "." )? IDENTIFIER "=" assignment
+                     | logic_or ;
+- logic_or          -> logic_and ( "or" logic_and )* ;
+- logic_and         -> equality ( "and" equality )* ;
+- equality          -> comparison ( ("==" | "!=") comparison )*;
+- comparison        -> term ( (">" | ">=" | "<" | "<=") term )*;
+- term              -> factor ( ("+" | "-") factor )*;
+- factor            -> unary ( ("/" | "*") unary )*;
+- unary             -> ("!" | "-") unary | call ;
+- call              -> primary ( "(" arguments? ")" | "." IDENTIFIER )* ;
+- arguments         -> expression ( "," expression )* ;
+- primary           -> NUMBER | STRING | "true" | "false" | "nil"
+                     | "(" expression ")"
+                     | IDENTIFIER ;
+
 ```
 
 ## Todos

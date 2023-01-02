@@ -143,7 +143,9 @@ impl<'a> StmtVisitor for Resolver<'a> {
         name: &Token,
         methods: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
-        todo!()
+        self.declare(name)?;
+        self.define(name);
+        Ok(())
     }
 
     fn visit_if(
@@ -225,13 +227,19 @@ impl<'a> ExprVisitor for Resolver<'a> {
         Ok(())
     }
 
-    fn visit_get(
+    fn visit_get(&mut self, _: &Expr, object: &Expr, _: &Token) -> Result<Self::Item, LoskError> {
+        self.visit_expr(object)
+    }
+
+    fn visit_set(
         &mut self,
-        expr: &Expr,
+        _: &Expr,
         object: &Expr,
-        name: &Token,
+        _: &Token,
+        value: &Expr,
     ) -> Result<Self::Item, LoskError> {
-        todo!()
+        self.visit_expr(object)?;
+        self.visit_expr(value)
     }
 
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError> {

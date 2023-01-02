@@ -1,11 +1,13 @@
 use crate::callable::Callable;
+use crate::instance::Instance;
+use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ptr;
 use std::rc::Rc;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
-pub enum Type {
+pub(crate) enum Type {
     LeftParen,
     RightParen,
     LeftBrace,
@@ -54,6 +56,7 @@ pub enum Type {
 #[derive(Debug, Clone)]
 pub(crate) enum Literal {
     Callable(Rc<dyn Callable>),
+    Instance(Rc<RefCell<Instance>>),
     Str(Rc<String>),
     Num(f64),
     Bool(bool),
@@ -81,6 +84,7 @@ impl Hash for Literal {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
             Literal::Callable(ptr) => Rc::as_ptr(ptr).hash(state),
+            Literal::Instance(ptr) => Rc::as_ptr(ptr).hash(state),
             Literal::Str(val) => val.hash(state),
             Literal::Num(val) => val.to_bits().hash(state),
             Literal::Bool(val) => val.hash(state),
@@ -112,6 +116,9 @@ impl Display for Literal {
         match self {
             Literal::Callable(val) => {
                 write!(f, "{:?}", val)
+            }
+            Literal::Instance(instance) => {
+                write!(f, "{}", RefCell::borrow(instance))
             }
             Literal::Str(val) => write!(f, "{}", val),
             Literal::Num(val) => write!(f, "{}", val),

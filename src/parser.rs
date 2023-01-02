@@ -68,7 +68,17 @@ impl<'a> Parser<'a> {
     }
 
     fn class_declaration(&mut self) -> StmtResult {
-        todo!()
+        let name = self
+            .consume(Type::Identifier, "Expect class name.")?
+            .clone();
+        self.consume(Type::LeftBrace, "Expect '{' before class body.")?;
+
+        let mut methods = Vec::new();
+        while !self.check(Type::RightBrace) && !self.is_at_end() {
+            methods.push(self.function(FunctionKind::Method)?);
+        }
+        self.consume(Type::RightBrace, "Expect '}' after class body.")?;
+        Ok(Stmt::class(name, methods))
     }
 
     fn function(&mut self, kind: FunctionKind) -> StmtResult {
@@ -248,18 +258,22 @@ impl<'a> Parser<'a> {
         let expr = self.or_expression()?;
         if self.match_one(Type::Equal) {
             let equals = self.previous().clone();
-            let value = self.assignment()?;
+            let value = Box::new(self.assignment()?);
 
-            if let Expr::Variable { name } = &expr {
-                Ok(Expr::Assign {
-                    name: name.clone(),
-                    value: Box::new(value),
-                })
-            } else {
-                Err(LoskError::parser_error(
+            match expr {
+                Expr::Variable { name } => Ok(Expr::Assign {
+                    name,
+                    value,
+                }),
+                Expr::Get { name, object } => Ok(Expr::Set {
+                    object,
+                    name,
+                    value,
+                }),
+                _ => Err(LoskError::parser_error(
                     &equals,
                     "Invalid assignment target.",
-                ))
+                )),
             }
         } else {
             Ok(expr)
@@ -372,8 +386,10 @@ impl<'a> Parser<'a> {
             if self.match_one(Type::LeftParen) {
                 expr = self.finish_call(expr)?;
             } else if self.match_one(Type::Dot) {
-                // Class identifier
-                todo!()
+                let name = self
+                    .consume(Type::Identifier, "Expect property name after '.'.")?
+                    .clone();
+                expr = Expr::get(expr, name);
             } else {
                 break;
             }
