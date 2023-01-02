@@ -502,9 +502,21 @@ mod tests {
         let mut interpreter = Interpreter::new(output.clone());
         let mut resolver = Resolver::new(&mut interpreter);
         let parsed = parser.parse().unwrap();
-        let resolved = resolver.resolve(parsed);
-        let result = interpreter.interpret(&resolved.unwrap());
 
+        // Some of the test cases test the resolver error. So if there's an error from resolver,
+        // ensure the test messages match and end the program.
+        let resolved = match (resolver.resolve(parsed), err) {
+            (Err(LoskError::RuntimeError { msg, .. }), Some(expected)) => {
+                assert_eq!(expected, msg);
+                return;
+            }
+            (Err(rerr), _) => {
+                panic!("Unexpected error from resolver '{:?}'.", rerr);
+            }
+            (Ok(val), _) => val,
+        };
+
+        let result = interpreter.interpret(&resolved);
         match (result, err) {
             (Err(LoskError::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
             (Err(LoskError::RuntimeError { msg, .. }), None) => {
@@ -636,5 +648,14 @@ mod tests {
     #[test]
     fn test_native_functions_with_wrong_argument_number() {
         test_statements("clock(1);", None, Some("Expected 0 arguments but got 1."))
+    }
+
+    #[test]
+    fn test_this_cant_be_used_outside_of_a_class() {
+        test_statements(
+            "print this;",
+            None,
+            Some("Can't use 'this' outside of a class."),
+        );
     }
 }

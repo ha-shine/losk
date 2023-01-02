@@ -17,10 +17,17 @@ enum FunctionType {
     Method,
 }
 
+#[derive(Copy, Clone)]
+enum ClassType {
+    None,
+    Class,
+}
+
 pub(crate) struct Resolver<'a> {
     scopes: Vec<HashMap<String, State>>,
     interpreter: &'a mut Interpreter,
-    current: FunctionType,
+    current_fun: FunctionType,
+    current_cls: ClassType,
 }
 
 pub struct ResolvedStmts(pub(crate) Vec<Stmt>);
@@ -30,7 +37,8 @@ impl<'a> Resolver<'a> {
         Resolver {
             scopes: Vec::new(),
             interpreter,
-            current: FunctionType::None,
+            current_fun: FunctionType::None,
+            current_cls: ClassType::None,
         }
     }
 
@@ -96,8 +104,8 @@ impl<'a> Resolver<'a> {
         body: &[Stmt],
         ty: FunctionType,
     ) -> Result<(), LoskError> {
-        let enclosing = self.current;
-        self.current = ty;
+        let enclosing = self.current_fun;
+        self.current_fun = ty;
 
         self.begin_scope();
         for param in params {
@@ -107,7 +115,7 @@ impl<'a> Resolver<'a> {
         self.resolve_stmts(body)?;
         self.end_scope();
 
-        self.current = enclosing;
+        self.current_fun = enclosing;
         Ok(())
     }
 }
@@ -144,9 +152,10 @@ impl<'a> StmtVisitor for Resolver<'a> {
         name: &Token,
         methods: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
+        let current = self.current_cls;
+        self.current_cls = ClassType::Class;
         self.declare(name)?;
         self.define(name);
-
         self.begin_scope();
         self.scopes
             .last_mut()
@@ -163,6 +172,7 @@ impl<'a> StmtVisitor for Resolver<'a> {
             }
         }
         self.end_scope();
+        self.current_cls = current;
         Ok(())
     }
 
@@ -261,6 +271,13 @@ impl<'a> ExprVisitor for Resolver<'a> {
     }
 
     fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError> {
+        if let ClassType::None = self.current_cls {
+            return Err(LoskError::runtime_error(
+                keyword,
+                "Can't use 'this' outside of a class.",
+            ));
+        }
+
         self.resolve_local(expr, keyword);
         Ok(())
     }
