@@ -149,10 +149,11 @@ impl Callable for Function {
 pub(crate) struct Method {
     closure: Rc<RefCell<Environment>>,
     function: Rc<Function>,
+    is_init: bool,
 }
 
 impl Method {
-    fn bind(function: Rc<Function>, instance: Rc<RefCell<Instance>>) -> Self {
+    fn bind(function: Rc<Function>, instance: Rc<RefCell<Instance>>, is_init: bool) -> Self {
         let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(
             &function.closure,
         ))));
@@ -160,7 +161,11 @@ impl Method {
             .borrow_mut()
             .define("this", Literal::Instance(instance));
 
-        Method { closure, function }
+        Method {
+            closure,
+            function,
+            is_init,
+        }
     }
 }
 
@@ -178,12 +183,17 @@ impl Callable for Method {
         interpreter: &mut Interpreter,
         args: &[Literal],
     ) -> Result<Literal, LoskError> {
-        execute_function(
+        let res = execute_function(
             Rc::clone(&self.function),
             Rc::clone(&self.closure),
             interpreter,
             args,
-        )
+        );
+
+        match res {
+            Ok(_) if self.is_init => Ok(self.closure.borrow().get_at(0, "this").unwrap()),
+            _ => res,
+        }
     }
 }
 
@@ -216,11 +226,24 @@ impl Callable for Class {
     }
 
     fn arity(&self) -> usize {
-        0
+        match self.find_method("init") {
+            Some(init) => init.arity(),
+            _ => 0,
+        }
     }
 
-    fn execute(self: Rc<Self>, _: &mut Interpreter, _: &[Literal]) -> Result<Literal, LoskError> {
-        Ok(Literal::Instance(Instance::new(self)))
+    fn execute(
+        self: Rc<Self>,
+        interpreter: &mut Interpreter,
+        args: &[Literal],
+    ) -> Result<Literal, LoskError> {
+        let instance = Instance::new(Rc::clone(&self));
+        if let Some(init) = self.find_method("init") {
+            // Not very efficient here, the created instance is copied over to Rc
+            Rc::new(Method::bind(init, Rc::clone(&instance), true)).execute(interpreter, args)?;
+        }
+
+        Ok(Literal::Instance(instance))
     }
 }
 
@@ -243,7 +266,11 @@ impl Instance {
             Some(field.clone())
         } else {
             instance.borrow().class.find_method(name).map(|function| {
-                Literal::Callable(Rc::new(Method::bind(function, Rc::clone(instance))))
+                Literal::Callable(Rc::new(Method::bind(
+                    function,
+                    Rc::clone(instance),
+                    name == "init",
+                )))
             })
         }
     }
