@@ -142,22 +142,34 @@ macro_rules! impl_from_num_for_literal {
 
 impl_from_num_for_literal!(u8 i8 u16 i16 u32 i32 u64 i64 u128 i128 usize isize f32 f64);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct TokenIndex(pub(crate) usize);
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Token {
     pub(crate) ty: Type,
     pub(crate) lexeme: String,
     pub(crate) line: usize,
     pub(crate) col: usize,
+    pub(crate) idx: TokenIndex,
     pub(crate) value: Literal,
 }
 
 impl Token {
-    pub(crate) fn new(ty: Type, lexeme: String, line: usize, col: usize, value: Literal) -> Self {
+    pub(crate) fn new(
+        ty: Type,
+        lexeme: String,
+        line: usize,
+        col: usize,
+        idx: usize,
+        value: Literal,
+    ) -> Self {
         Token {
             ty,
             lexeme,
             line,
             col,
+            idx: TokenIndex(idx),
             value,
         }
     }

@@ -261,10 +261,7 @@ impl<'a> Parser<'a> {
             let value = Box::new(self.assignment()?);
 
             match expr {
-                Expr::Variable { name } => Ok(Expr::Assign {
-                    name,
-                    value,
-                }),
+                Expr::Variable { name } => Ok(Expr::Assign { name, value }),
                 Expr::Get { name, object } => Ok(Expr::Set {
                     object,
                     name,
@@ -511,8 +508,8 @@ mod tests {
     use crate::token::{Literal, Token, Type};
 
     macro_rules! token {
-        ($ty:ident, $lex:literal, $col:literal) => {
-            Token::new(Type::$ty, String::from($lex), 0, $col, Literal::Nil)
+        ($ty:ident, $lex:literal, $col:literal, $idx:literal) => {
+            Token::new(Type::$ty, String::from($lex), 0, $col, $idx, Literal::Nil)
         };
     }
 
@@ -524,7 +521,7 @@ mod tests {
                 "3 < 4;",
                 Stmt::expression(Expr::binary(
                     Expr::literal(3),
-                    token!(Less, "<", 2),
+                    token!(Less, "<", 2, 1),
                     Expr::literal(4),
                 )),
             ),
@@ -534,15 +531,15 @@ mod tests {
                 Stmt::expression(Expr::binary(
                     Expr::binary(
                         Expr::literal(1),
-                        token!(Plus, "+", 2),
+                        token!(Plus, "+", 2, 1),
                         Expr::grouping(Expr::binary(
                             Expr::literal("hello"),
-                            token!(Minus, "-", 13),
+                            token!(Minus, "-", 13, 4),
                             Expr::literal(4),
                         )),
                     ),
-                    token!(Minus, "-", 18),
-                    Expr::variable(token!(Identifier, "foo", 20)),
+                    token!(Minus, "-", 18, 7),
+                    Expr::variable(token!(Identifier, "foo", 20, 8)),
                 )),
             ),
             // logical expression
@@ -550,7 +547,7 @@ mod tests {
                 "true and false;", // logical or expressions
                 Stmt::expression(Expr::logical(
                     Expr::literal(true),
-                    token!(And, "and", 5),
+                    token!(And, "and", 5, 1),
                     Expr::literal(false),
                 )),
             ),
@@ -561,13 +558,13 @@ mod tests {
                     Expr::grouping(Expr::binary(
                         Expr::grouping(Expr::binary(
                             Expr::literal(1),
-                            token!(Plus, "+", 4),
+                            token!(Plus, "+", 4, 3),
                             Expr::literal(2),
                         )),
-                        token!(Slash, "/", 9),
+                        token!(Slash, "/", 9, 6),
                         Expr::literal(4),
                     )),
-                    token!(Star, "*", 14),
+                    token!(Star, "*", 14, 9),
                     Expr::literal(10),
                 )),
             ),
@@ -576,7 +573,7 @@ mod tests {
                 "print 1 + 2;",
                 Stmt::print(Expr::binary(
                     Expr::literal(1),
-                    token!(Plus, "+", 8),
+                    token!(Plus, "+", 8, 2),
                     Expr::literal(2),
                 )),
             ),

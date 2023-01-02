@@ -9,12 +9,12 @@ use crate::callable::{BoxedFunction, Class, Function, Native};
 use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::resolver::ResolvedStmts;
-use crate::token::{Literal, Token, Type};
+use crate::token::{Literal, Token, TokenIndex, Type};
 
 pub struct Interpreter {
     globals: Rc<RefCell<Environment>>,
     env: Rc<RefCell<Environment>>,
-    locals: HashMap<Token, usize>,
+    locals: HashMap<TokenIndex, usize>,
     stdout: Rc<RefCell<dyn Write>>,
 }
 
@@ -66,11 +66,11 @@ impl Interpreter {
     }
 
     pub(crate) fn resolve(&mut self, token: &Token, depth: usize) {
-        self.locals.insert(token.clone(), depth);
+        self.locals.insert(token.idx, depth);
     }
 
     fn lookup_variable(&self, token: &Token) -> Option<Literal> {
-        match self.locals.get(token) {
+        match self.locals.get(&token.idx) {
             None => self.globals.borrow().get(&token.lexeme),
             Some(dist) => RefCell::borrow(&self.env).get_at(*dist, &token.lexeme),
         }
@@ -88,7 +88,7 @@ impl ExprVisitor for Interpreter {
     ) -> Result<Literal, LoskError> {
         let value = self.visit_expr(value)?;
 
-        match self.locals.get(name) {
+        match self.locals.get(&name.idx) {
             Some(dist) => {
                 RefCell::borrow_mut(&self.env)
                     .assign_at(*dist, &name.lexeme, value.clone())
