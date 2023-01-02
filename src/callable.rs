@@ -96,6 +96,25 @@ impl Function {
     }
 }
 
+// Helper method that will be called from both functions and methods
+fn execute_function(
+    function: Rc<Function>,
+    closure: Rc<RefCell<Environment>>,
+    interpreter: &mut Interpreter,
+    args: &[Literal],
+) -> Result<Literal, LoskError> {
+    let mut env = Environment::with(closure);
+    for (param, arg) in function.params.iter().zip(args) {
+        env.define(&param.lexeme, arg.clone());
+    }
+
+    match interpreter.execute_block_with_env(&function.body, Rc::new(RefCell::new(env))) {
+        Ok(()) => Ok(Literal::Nil),
+        Err(LoskError::Return(value)) => Ok(value.value),
+        Err(err) => Err(err),
+    }
+}
+
 impl Callable for Function {
     fn ty(&self) -> CallableType {
         CallableType::Function
@@ -114,16 +133,57 @@ impl Callable for Function {
         interpreter: &mut Interpreter,
         args: &[Literal],
     ) -> Result<Literal, LoskError> {
-        let mut env = Environment::with(self.closure.clone());
-        for (param, arg) in self.params.iter().zip(args) {
-            env.define(&param.lexeme, arg.clone());
-        }
+        let closure = Rc::clone(&self.closure);
+        execute_function(self, closure, interpreter, args)
+    }
+}
 
-        match interpreter.execute_block_with_env(&self.body, Rc::new(RefCell::new(env))) {
-            Ok(()) => Ok(Literal::Nil),
-            Err(LoskError::Return(value)) => Ok(value.value),
-            Err(err) => Err(err),
-        }
+// This is a little bit different from the textbook's class methods. In textbook, a new function
+// which has the same type as `Function` is returned with a new closure with `this` bounded to
+// calling instance. Since the java objects are references, that is fast. But in Rust, if a new
+// function is created whenever a class method is called, it'll not be as efficient since the
+// body statements need to be cloned. This tries to remedy that by taking the middle approach where
+// the original function is referenced through an Rc. This requires making two Rc clones, which
+// consists of making two ref-count increments.
+#[derive(Debug)]
+pub(crate) struct Method {
+    closure: Rc<RefCell<Environment>>,
+    function: Rc<Function>,
+}
+
+impl Method {
+    fn bind(function: Rc<Function>, instance: Rc<RefCell<Instance>>) -> Self {
+        let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(
+            &function.closure,
+        ))));
+        closure
+            .borrow_mut()
+            .define("this", Literal::Instance(instance));
+
+        Method { closure, function }
+    }
+}
+
+impl Callable for Method {
+    fn name(&self) -> &str {
+        self.function.name()
+    }
+
+    fn arity(&self) -> usize {
+        self.function.arity()
+    }
+
+    fn execute(
+        self: Rc<Self>,
+        interpreter: &mut Interpreter,
+        args: &[Literal],
+    ) -> Result<Literal, LoskError> {
+        execute_function(
+            Rc::clone(&self.function),
+            Rc::clone(&self.closure),
+            interpreter,
+            args,
+        )
     }
 }
 
@@ -178,13 +238,13 @@ impl Instance {
         }))
     }
 
-    pub(crate) fn get(&self, name: &str) -> Option<Literal> {
-        if let Some(field) = self.fields.get(name) {
+    pub(crate) fn get(instance: &Rc<RefCell<Self>>, name: &str) -> Option<Literal> {
+        if let Some(field) = instance.borrow().fields.get(name) {
             Some(field.clone())
         } else {
-            self.class
-                .find_method(name)
-                .map(|method| Literal::Callable(method))
+            instance.borrow().class.find_method(name).map(|function| {
+                Literal::Callable(Rc::new(Method::bind(function, Rc::clone(instance))))
+            })
         }
     }
 

@@ -1,5 +1,3 @@
-extern crate core;
-
 pub mod errors;
 pub mod interpreter;
 pub mod parser;

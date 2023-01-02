@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
-use crate::callable::{BoxedFunction, Class, Function, Native};
+use crate::callable::{BoxedFunction, Class, Function, Instance, Native};
 use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::resolver::ResolvedStmts;
@@ -230,7 +230,7 @@ impl ExprVisitor for Interpreter {
         name: &Token,
     ) -> Result<Self::Item, LoskError> {
         if let Literal::Instance(instance) = self.visit_expr(object)? {
-            match instance.borrow().get(&name.lexeme) {
+            match Instance::get(&instance, &name.lexeme) {
                 Some(val) => Ok(val),
                 None => Err(LoskError::runtime_error(
                     name,
@@ -260,6 +260,16 @@ impl ExprVisitor for Interpreter {
             _ => Err(LoskError::runtime_error(
                 name,
                 "Only instances have fields.",
+            )),
+        }
+    }
+
+    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError> {
+        match self.lookup_variable(keyword) {
+            Some(val) => Ok(val),
+            None => Err(LoskError::runtime_error(
+                keyword,
+                "'this' not bound to anything.",
             )),
         }
     }

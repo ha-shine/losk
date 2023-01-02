@@ -146,6 +146,12 @@ impl<'a> StmtVisitor for Resolver<'a> {
     ) -> Result<Self::Item, LoskError> {
         self.declare(name)?;
         self.define(name);
+
+        self.begin_scope();
+        self.scopes
+            .last_mut()
+            .unwrap()
+            .insert("this".to_string(), State::Defined);
         for method in methods {
             if let Stmt::Function { name, params, body } = method {
                 self.resolve_function(name, params, body, FunctionType::Method)?;
@@ -156,6 +162,7 @@ impl<'a> StmtVisitor for Resolver<'a> {
                 )
             }
         }
+        self.end_scope();
         Ok(())
     }
 
@@ -251,6 +258,11 @@ impl<'a> ExprVisitor for Resolver<'a> {
     ) -> Result<Self::Item, LoskError> {
         self.visit_expr(object)?;
         self.visit_expr(value)
+    }
+
+    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError> {
+        self.resolve_local(expr, keyword);
+        Ok(())
     }
 
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError> {

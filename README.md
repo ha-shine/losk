@@ -77,9 +77,8 @@ them yet.
 
 - [ ] Generate StmtVisitor and ExprVisitor traits using procedural macro. I am not yet familiar enough with 
       proc-macros to do this task efficiently.
-- [ ] The depths of local variables are stored with Tokens as keys. This can be wasteful since Token contains other
-      metadata that are not useful for the purpose of binding. This can be revisited and use a source location for 
-      better space efficiency (e.g token index, line+column, or even identifier for each token).
+- [ ] Currently, all the enums (Stmt, Expr, Literal, etc.) contains fields which is not very ergonomics. Convert their
+      inner fields into their own struct.
 
 ### Challenges
 

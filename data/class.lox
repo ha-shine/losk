@@ -2,13 +2,29 @@ class Person {
     greet() {
         print "Hello, world!";
     }
+
+    greetName() {
+        print "Hello, my name is " + this.name;
+    }
 }
 
+// Printing classes and objects
 var jane = Person();
 print Person;
 print jane;
 
+// Setting and accessing object properties
 jane.name = "Jane";
 print jane.name;
 
+// Executing instance's methods directly and indirectly
 jane.greet();
+
+var greeter = jane.greet;
+greeter();
+
+// Ensuring this binding works correctly
+jane.greetName();
+
+var janeGreeter = jane.greetName;
+janeGreeter();

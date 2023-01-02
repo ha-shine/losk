@@ -32,6 +32,9 @@ pub(crate) enum Expr {
         name: Token,
         value: Box<Expr>,
     },
+    This {
+        keyword: Token,
+    },
     Grouping {
         expression: Box<Expr>,
     },
@@ -69,7 +72,11 @@ pub(crate) trait ExprVisitor {
                 args,
             } => self.visit_call(expr, callee, paren, args),
             Expr::Get { object, name } => self.visit_get(expr, object, name),
-            Expr::Set { object, name, value } => self.visit_set(expr, object, name, value),
+            Expr::Set {
+                object,
+                name,
+                value,
+            } => self.visit_set(expr, object, name, value),
             Expr::Grouping { expression } => self.visit_grouping(expr, expression),
             Expr::Literal { value } => self.visit_literal(expr, value),
             Expr::Logical {
@@ -79,6 +86,7 @@ pub(crate) trait ExprVisitor {
             } => self.visit_logical(expr, left, operator, right),
             Expr::Unary { operator, right } => self.visit_unary(expr, operator, right),
             Expr::Variable { name } => self.visit_variable(expr, name),
+            Expr::This { keyword } => self.visit_this(expr, keyword),
         }
     }
     fn visit_assign(
@@ -114,6 +122,7 @@ pub(crate) trait ExprVisitor {
         name: &Token,
         value: &Expr,
     ) -> Result<Self::Item, LoskError>;
+    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError>;
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError>;
     fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, LoskError>;
     fn visit_logical(
@@ -202,6 +211,10 @@ impl Expr {
 
     pub(crate) fn variable(name: Token) -> Self {
         Expr::Variable { name }
+    }
+
+    pub(crate) fn this(keyword: Token) -> Self {
+        Expr::This { keyword }
     }
 }
 

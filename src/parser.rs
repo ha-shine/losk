@@ -428,12 +428,11 @@ impl<'a> Parser<'a> {
         } else if self.match_one(Type::LeftParen) {
             let expr = self.expression()?;
             self.consume(Type::RightParen, "Expect ')' after expression.")?;
-            Ok(Expr::Grouping {
-                expression: Box::new(expr),
-            })
+            Ok(Expr::grouping(expr))
         } else if self.match_one(Type::Identifier) {
-            let name = self.previous().clone();
-            Ok(Expr::Variable { name })
+            Ok(Expr::variable(self.previous().clone()))
+        } else if self.match_one(Type::This) {
+            Ok(Expr::this(self.previous().clone()))
         } else {
             Err(LoskError::parser_error(self.peek(), "Expect expression."))
         }
