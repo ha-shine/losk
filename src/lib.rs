@@ -1,3 +1,5 @@
+extern crate core;
+
 pub mod errors;
 pub mod interpreter;
 pub mod parser;
@@ -7,5 +9,4 @@ pub mod token;
 pub(crate) mod ast;
 pub(crate) mod callable;
 pub(crate) mod env;
-pub(crate) mod instance;
 pub(crate) mod resolver;

@@ -14,6 +14,7 @@ enum State {
 enum FunctionType {
     None,
     Function,
+    Method,
 }
 
 pub(crate) struct Resolver<'a> {
@@ -145,6 +146,16 @@ impl<'a> StmtVisitor for Resolver<'a> {
     ) -> Result<Self::Item, LoskError> {
         self.declare(name)?;
         self.define(name);
+        for method in methods {
+            if let Stmt::Function { name, params, body } = method {
+                self.resolve_function(name, params, body, FunctionType::Method)?;
+            } else {
+                panic!(
+                    "Unexpected statement '{:?}' found in class body, expecting a method.",
+                    method
+                )
+            }
+        }
         Ok(())
     }
 

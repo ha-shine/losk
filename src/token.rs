@@ -1,5 +1,4 @@
-use crate::callable::Callable;
-use crate::instance::Instance;
+use crate::callable::{Callable, Instance};
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};

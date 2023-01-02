@@ -1,8 +1,14 @@
-class Foo {}
+class Person {
+    greet() {
+        print "Hello, world!";
+    }
+}
 
-var fooObject = Foo();
-print Foo;
-print fooObject;
+var jane = Person();
+print Person;
+print jane;
 
-fooObject.name = "foo object";
-print fooObject.name;
+jane.name = "Jane";
+print jane.name;
+
+jane.greet();

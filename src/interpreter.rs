@@ -27,11 +27,13 @@ impl Interpreter {
         let clock: BoxedFunction = Box::new(move |_| {
             let start = SystemTime::now();
             let since_epoch = start.duration_since(UNIX_EPOCH).unwrap();
-            writeln!(RefCell::borrow_mut(&clock_out), "{:?}\n", since_epoch).unwrap();
+            writeln!(clock_out.borrow_mut(), "{:?}\n", since_epoch).unwrap();
             Ok(Literal::Nil)
         });
         let clock_callable = Native::new(clock, String::from("clock"), 0);
-        RefCell::borrow_mut(&globals).define("clock", Literal::Callable(Rc::new(clock_callable)));
+        globals
+            .borrow_mut()
+            .define("clock", Literal::Callable(Rc::new(clock_callable)));
 
         Interpreter {
             env: globals.clone(),
@@ -72,7 +74,7 @@ impl Interpreter {
     fn lookup_variable(&self, token: &Token) -> Option<Literal> {
         match self.locals.get(&token.idx) {
             None => self.globals.borrow().get(&token.lexeme),
-            Some(dist) => RefCell::borrow(&self.env).get_at(*dist, &token.lexeme),
+            Some(dist) => self.env.borrow().get_at(*dist, &token.lexeme),
         }
     }
 }
@@ -90,12 +92,14 @@ impl ExprVisitor for Interpreter {
 
         match self.locals.get(&name.idx) {
             Some(dist) => {
-                RefCell::borrow_mut(&self.env)
+                self.env
+                    .borrow_mut()
                     .assign_at(*dist, &name.lexeme, value.clone())
                     .unwrap();
             }
             None => {
-                RefCell::borrow_mut(&self.env)
+                self.env
+                    .borrow_mut()
                     .assign(&name.lexeme, value.clone())
                     .unwrap();
             }
@@ -226,7 +230,7 @@ impl ExprVisitor for Interpreter {
         name: &Token,
     ) -> Result<Self::Item, LoskError> {
         if let Literal::Instance(instance) = self.visit_expr(object)? {
-            match RefCell::borrow(&instance).get(&name.lexeme) {
+            match instance.borrow().get(&name.lexeme) {
                 Some(val) => Ok(val),
                 None => Err(LoskError::runtime_error(
                     name,
@@ -251,7 +255,7 @@ impl ExprVisitor for Interpreter {
         match self.visit_expr(object)? {
             Literal::Instance(instance) => {
                 let value = self.visit_expr(value)?;
-                Ok(RefCell::borrow_mut(&instance).set(&name.lexeme, value))
+                Ok(instance.borrow_mut().set(&name.lexeme, value))
             }
             _ => Err(LoskError::runtime_error(
                 name,
@@ -361,7 +365,7 @@ impl StmtVisitor for Interpreter {
     ) -> Result<Self::Item, LoskError> {
         let boxed = Rc::new(Function::new(self.env.clone(), name, params, body));
         let callable = Literal::Callable(boxed);
-        RefCell::borrow_mut(&self.env).define(&name.lexeme, callable);
+        self.env.borrow_mut().define(&name.lexeme, callable);
         Ok(())
     }
 
@@ -371,10 +375,28 @@ impl StmtVisitor for Interpreter {
         name: &Token,
         methods: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
-        RefCell::borrow_mut(&self.env).define(&name.lexeme, Literal::Nil);
-        let class = Class::new(&name.lexeme);
-        if let Err(_) =
-            RefCell::borrow_mut(&self.env).assign(&name.lexeme, Literal::Callable(class))
+        self.env.borrow_mut().define(&name.lexeme, Literal::Nil);
+        let mut methods_map = HashMap::new();
+        for method in methods {
+            if let Stmt::Function { name, params, body } = method {
+                methods_map.insert(
+                    name.lexeme.clone(),
+                    Rc::new(Function::new(Rc::clone(&self.env), name, params, body)),
+                );
+            } else {
+                panic!(
+                    "Unexpected statement '{:?}' found in class body, expecting a method.",
+                    method
+                )
+            }
+        }
+
+        let class = Class::new(&name.lexeme, methods_map);
+        if self
+            .env
+            .borrow_mut()
+            .assign(&name.lexeme, Literal::Callable(class))
+            .is_err()
         {
             Err(LoskError::runtime_error(name, "Undefined variable."))
         } else {
@@ -425,7 +447,7 @@ impl StmtVisitor for Interpreter {
 
     fn visit_print(&mut self, expr: &Stmt, expression: &Expr) -> Result<(), LoskError> {
         let value = self.visit_expr(expression)?;
-        writeln!(RefCell::borrow_mut(&self.stdout), "{}", value).unwrap();
+        writeln!(self.stdout.borrow_mut(), "{}", value).unwrap();
         Ok(())
     }
 
@@ -441,7 +463,7 @@ impl StmtVisitor for Interpreter {
 
     fn visit_var(&mut self, expr: &Stmt, name: &Token, expression: &Expr) -> Result<(), LoskError> {
         let value = self.visit_expr(expression)?;
-        RefCell::borrow_mut(&self.env).define(&name.lexeme, value);
+        self.env.borrow_mut().define(&name.lexeme, value);
         Ok(())
     }
 }

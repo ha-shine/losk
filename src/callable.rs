@@ -1,11 +1,11 @@
 use crate::ast::Stmt;
 use crate::env::Environment;
 use crate::errors::LoskError;
-use crate::instance::Instance;
 use crate::interpreter::Interpreter;
 use crate::token::{Literal, Token};
 use std::cell::RefCell;
-use std::fmt::{Debug, Formatter};
+use std::collections::HashMap;
+use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 #[derive(Debug)]
@@ -68,6 +68,7 @@ impl Callable for Native {
     }
 }
 
+#[derive(Debug)]
 pub(crate) struct Function {
     closure: Rc<RefCell<Environment>>,
     name: Token,
@@ -129,13 +130,19 @@ impl Callable for Function {
 #[derive(Debug)]
 pub(crate) struct Class {
     name: String,
+    methods: HashMap<String, Rc<Function>>,
 }
 
 impl Class {
-    pub(crate) fn new(name: &str) -> Rc<Self> {
+    pub(crate) fn new(name: &str, methods: HashMap<String, Rc<Function>>) -> Rc<Self> {
         Rc::new(Class {
             name: name.to_string(),
+            methods,
         })
+    }
+
+    fn find_method(&self, name: &str) -> Option<Rc<Function>> {
+        self.methods.get(name).cloned()
     }
 }
 
@@ -154,5 +161,41 @@ impl Callable for Class {
 
     fn execute(self: Rc<Self>, _: &mut Interpreter, _: &[Literal]) -> Result<Literal, LoskError> {
         Ok(Literal::Instance(Instance::new(self)))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct Instance {
+    class: Rc<Class>,
+    fields: HashMap<String, Literal>,
+}
+
+impl Instance {
+    pub(crate) fn new(class: Rc<Class>) -> Rc<RefCell<Self>> {
+        Rc::new(RefCell::new(Instance {
+            class,
+            fields: HashMap::new(),
+        }))
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<Literal> {
+        if let Some(field) = self.fields.get(name) {
+            Some(field.clone())
+        } else {
+            self.class
+                .find_method(name)
+                .map(|method| Literal::Callable(method))
+        }
+    }
+
+    pub(crate) fn set(&mut self, name: &str, value: Literal) -> Literal {
+        self.fields.insert(String::from(name), value.clone());
+        value
+    }
+}
+
+impl Display for Instance {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<Instance {}.class>", self.class.name())
     }
 }

@@ -1,3 +1,4 @@
-<Class Foo>
-<Instance Foo.class>
-foo object
+<Class Person>
+<Instance Person.class>
+Jane
+Hello, world!
