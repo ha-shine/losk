@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum CallableType {
     Function,
     Class,
@@ -26,6 +26,9 @@ pub(crate) trait Callable {
         interpreter: &mut Interpreter,
         args: &[Literal],
     ) -> Result<Literal, LoskError>;
+
+    // This is a bit hacky
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>>;
 }
 
 impl Debug for dyn Callable {
@@ -65,6 +68,10 @@ impl Callable for Native {
         args: &[Literal],
     ) -> Result<Literal, LoskError> {
         (self.func)(args)
+    }
+
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        None
     }
 }
 
@@ -136,6 +143,10 @@ impl Callable for Function {
         let closure = Rc::clone(&self.closure);
         execute_function(self, closure, interpreter, args)
     }
+
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        None
+    }
 }
 
 // This is a little bit different from the textbook's class methods. In textbook, a new function
@@ -153,7 +164,7 @@ pub(crate) struct Method {
 }
 
 impl Method {
-    fn bind(function: Rc<Function>, instance: Rc<RefCell<Instance>>, is_init: bool) -> Self {
+    pub(crate) fn bind(function: Rc<Function>, instance: Rc<RefCell<Instance>>, is_init: bool) -> Self {
         let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(
             &function.closure,
         ))));
@@ -195,24 +206,40 @@ impl Callable for Method {
             _ => res,
         }
     }
+
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        None
+    }
 }
 
 #[derive(Debug)]
 pub(crate) struct Class {
     name: String,
     methods: HashMap<String, Rc<Function>>,
+    superclass: Option<Rc<Class>>,
 }
 
 impl Class {
-    pub(crate) fn new(name: &str, methods: HashMap<String, Rc<Function>>) -> Rc<Self> {
+    pub(crate) fn new(
+        name: &str,
+        superclass: Option<Rc<Class>>,
+        methods: HashMap<String, Rc<Function>>,
+    ) -> Rc<Self> {
         Rc::new(Class {
             name: name.to_string(),
             methods,
+            superclass,
         })
     }
 
-    fn find_method(&self, name: &str) -> Option<Rc<Function>> {
-        self.methods.get(name).cloned()
+    pub(crate) fn find_method(&self, name: &str) -> Option<Rc<Function>> {
+        if let Some(fun) = self.methods.get(name) {
+            Some(Rc::clone(fun))
+        } else if let Some(superclass) = &self.superclass {
+            superclass.find_method(name)
+        } else {
+            None
+        }
     }
 }
 
@@ -244,6 +271,10 @@ impl Callable for Class {
         }
 
         Ok(Literal::Instance(instance))
+    }
+
+    fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
+        Some(self)
     }
 }
 

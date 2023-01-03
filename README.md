@@ -30,7 +30,7 @@ Terminals are in capital letters.
                      | fun_decl 
                      | var_decl
                      | statement ;
-- class_decl        -> "class" IDENTIFIER "{" function* "}" ;
+- class_decl        -> "class" IDENTIFIER ( "<" IDENTIFIER )? "{" function* "}" ;
 - fun_decl          -> "fun" function ;
 - function          -> IDENTIFIER "(" parameters? ")" block ;
 - parameters        -> IDENTIFIER ( "," IDENTIFIER )* ;
@@ -66,7 +66,8 @@ Terminals are in capital letters.
 - arguments         -> expression ( "," expression )* ;
 - primary           -> NUMBER | STRING | "true" | "false" | "nil"
                      | "(" expression ")"
-                     | IDENTIFIER ;
+                     | IDENTIFIER 
+                     | "super" "." IDENTIFIER ;
 
 ```
 
@@ -80,6 +81,8 @@ them yet.
 - [ ] Currently, all the enums (Stmt, Expr, Literal, etc.) contains fields which is not very ergonomics. Convert their
       inner fields into their own struct.
 - [ ] Main CLI for interpreter that can run as REPL environment or with a source file
+- [ ] Scanner is a good candidate for rewriting the output as an iterator. The iterator will have mutable access to
+      the scanner itself to increment token index.
 
 ### Challenges
 

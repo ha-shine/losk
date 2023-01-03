@@ -53,6 +53,10 @@ pub(crate) enum Expr {
     Variable {
         name: Token,
     },
+    Super {
+        keyword: Token,
+        method: Token,
+    },
     Empty,
 }
 
@@ -88,7 +92,8 @@ pub(crate) trait ExprVisitor {
             Expr::Unary { operator, right } => self.visit_unary(expr, operator, right),
             Expr::Variable { name } => self.visit_variable(expr, name),
             Expr::This { keyword } => self.visit_this(expr, keyword),
-            Expr::Empty => self.visit_expr(expr),
+            Expr::Super { keyword, method } => self.visit_super(expr, keyword, method),
+            Expr::Empty => self.visit_empty(expr),
         }
     }
     fn visit_assign(
@@ -125,6 +130,12 @@ pub(crate) trait ExprVisitor {
         value: &Expr,
     ) -> Result<Self::Item, LoskError>;
     fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError>;
+    fn visit_super(
+        &mut self,
+        expr: &Expr,
+        keyword: &Token,
+        method: &Token,
+    ) -> Result<Self::Item, LoskError>;
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError>;
     fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, LoskError>;
     fn visit_logical(
@@ -146,7 +157,7 @@ pub(crate) trait ExprVisitor {
 
 #[allow(dead_code)]
 impl Expr {
-    pub(crate) fn nil() -> Self {
+    pub(crate) fn empty() -> Self {
         Expr::Empty
     }
 
@@ -219,6 +230,10 @@ impl Expr {
     pub(crate) fn this(keyword: Token) -> Self {
         Expr::This { keyword }
     }
+
+    pub(crate) fn super_(keyword: Token, method: Token) -> Self {
+        Expr::Super { keyword, method }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -236,6 +251,7 @@ pub(crate) enum Stmt {
     },
     Class {
         name: Token,
+        superclass: Rc<Expr>,
         methods: Vec<Stmt>, // only Functions are allowed here
     },
     If {
@@ -270,7 +286,11 @@ pub(crate) trait StmtVisitor {
             Stmt::Expression { expression } => self.visit_expression(stmt, expression),
             Stmt::Block { statements } => self.visit_block(stmt, statements),
             Stmt::Function { name, params, body } => self.visit_function(stmt, name, params, body),
-            Stmt::Class { name, methods } => self.visit_class(stmt, name, methods),
+            Stmt::Class {
+                name,
+                superclass,
+                methods,
+            } => self.visit_class(stmt, name, superclass, methods),
             Stmt::If {
                 expression,
                 token,
@@ -302,6 +322,7 @@ pub(crate) trait StmtVisitor {
         &mut self,
         stmt: &Stmt,
         name: &Token,
+        superclass: &Expr,
         methods: &[Stmt],
     ) -> Result<Self::Item, LoskError>;
     fn visit_if(
@@ -351,8 +372,12 @@ impl Stmt {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn class(name: Token, methods: Vec<Stmt>) -> Self {
-        Stmt::Class { name, methods }
+    pub(crate) fn class(name: Token, superclass: Expr, methods: Vec<Stmt>) -> Self {
+        Stmt::Class {
+            name,
+            superclass: Rc::new(superclass),
+            methods,
+        }
     }
 
     pub(crate) fn if_(

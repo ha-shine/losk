@@ -1,0 +1,18 @@
+class Person {
+    greet() {
+        print "Hello!";
+    }
+}
+
+class Employee < Person {
+    greet() {
+        print "I'm an employee!";
+    }
+
+    test() {
+        super.greet();
+    }
+}
+
+var emp = Employee();
+emp.test();

@@ -71,6 +71,13 @@ impl<'a> Parser<'a> {
         let name = self
             .consume(Type::Identifier, "Expect class name.")?
             .clone();
+
+        let mut superclass = Expr::empty();
+        if self.match_one(Type::Less) {
+            self.consume(Type::Identifier, "Expect superclass name.")?;
+            superclass = Expr::variable(self.previous().clone());
+        }
+
         self.consume(Type::LeftBrace, "Expect '{' before class body.")?;
 
         let mut methods = Vec::new();
@@ -78,7 +85,7 @@ impl<'a> Parser<'a> {
             methods.push(self.function(FunctionKind::Method)?);
         }
         self.consume(Type::RightBrace, "Expect '}' after class body.")?;
-        Ok(Stmt::class(name, methods))
+        Ok(Stmt::class(name, superclass, methods))
     }
 
     fn function(&mut self, kind: FunctionKind) -> StmtResult {
@@ -124,7 +131,7 @@ impl<'a> Parser<'a> {
         let name = self
             .consume(Type::Identifier, "Expect variable name.")?
             .clone();
-        let mut init = Expr::nil();
+        let mut init = Expr::empty();
         if self.match_one(Type::Equal) {
             init = self.expression()?;
         }
@@ -212,14 +219,14 @@ impl<'a> Parser<'a> {
         let condition = if !self.check(Type::SemiColon) {
             self.expression()?
         } else {
-            Expr::nil()
+            Expr::empty()
         };
         self.consume(Type::SemiColon, "Expect ';' after loop condition.")?;
 
         let increment = if !self.check(Type::RightParen) {
             self.expression()?
         } else {
-            Expr::nil()
+            Expr::empty()
         };
         self.consume(Type::RightParen, "Expect ')' after for clauses.")?;
 
@@ -241,7 +248,7 @@ impl<'a> Parser<'a> {
 
     fn return_statement(&mut self) -> StmtResult {
         let keyword = self.previous().clone();
-        let mut value = Expr::nil();
+        let mut value = Expr::empty();
         if !self.check(Type::SemiColon) {
             value = self.expression()?;
         }
@@ -422,7 +429,7 @@ impl<'a> Parser<'a> {
         } else if self.match_one(Type::False) {
             Ok(Expr::literal(false))
         } else if self.match_one(Type::Nil) {
-            Ok(Expr::nil())
+            Ok(Expr::empty())
         } else if self.match_either(&[Type::Number, Type::String]) {
             Ok(Expr::literal(self.previous().value.clone()))
         } else if self.match_one(Type::LeftParen) {
@@ -433,6 +440,13 @@ impl<'a> Parser<'a> {
             Ok(Expr::variable(self.previous().clone()))
         } else if self.match_one(Type::This) {
             Ok(Expr::this(self.previous().clone()))
+        } else if self.match_one(Type::Super) {
+            let token = self.previous().clone();
+            self.consume(Type::Dot, "Expect '.' after 'super'.")?;
+            let method = self
+                .consume(Type::Identifier, "Expect superclass method name.")?
+                .clone();
+            Ok(Expr::super_(token, method))
         } else {
             Err(LoskError::parser_error(self.peek(), "Expect expression."))
         }

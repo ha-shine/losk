@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
-use crate::callable::{BoxedFunction, Class, Function, Instance, Native};
+use crate::callable::{BoxedFunction, CallableType, Class, Function, Instance, Method, Native};
 use crate::env::Environment;
 use crate::errors::LoskError;
 use crate::resolver::ResolvedStmts;
@@ -274,6 +274,42 @@ impl ExprVisitor for Interpreter {
         }
     }
 
+    fn visit_super(
+        &mut self,
+        expr: &Expr,
+        keyword: &Token,
+        method: &Token,
+    ) -> Result<Self::Item, LoskError> {
+        let dist = self.locals.get(&keyword.idx).unwrap();
+        let superclass = self.env.borrow().get_at(*dist, "super").unwrap();
+        let this = self.env.borrow().get_at(*dist - 1, "this").unwrap();
+
+        match (superclass, this) {
+            (Literal::Callable(callable), Literal::Instance(instance)) => {
+                let supe = callable.as_class().unwrap();
+                let fun = match supe.find_method(&method.lexeme) {
+                    Some(method) => method,
+                    _ => {
+                        return Err(LoskError::runtime_error(
+                            method,
+                            &format!("Unknown method super.{}", method.lexeme),
+                        ))
+                    }
+                };
+
+                Ok(Literal::Callable(Rc::new(Method::bind(
+                    fun,
+                    instance,
+                    method.lexeme == "init",
+                ))))
+            }
+            (supe, this) => panic!(
+                "Unexpected literal types for super({:?}) and this({:?})",
+                supe, this
+            ),
+        }
+    }
+
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError> {
         self.visit_expr(expression)
     }
@@ -387,15 +423,28 @@ impl StmtVisitor for Interpreter {
         &mut self,
         expr: &Stmt,
         name: &Token,
+        superclass: &Expr,
         methods: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
         self.env.borrow_mut().define(&name.lexeme, Literal::Nil);
+        let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(&self.env))));
+        let superclass = match self.visit_expr(superclass)? {
+            Literal::Nil => None,
+            Literal::Callable(callable) if callable.ty() == CallableType::Class => {
+                closure
+                    .borrow_mut()
+                    .define("super", Literal::Callable(Rc::clone(&callable)));
+                callable.as_class()
+            }
+            _ => return Err(LoskError::runtime_error(name, "Superclass must be a class")),
+        };
+
         let mut methods_map = HashMap::new();
         for method in methods {
             if let Stmt::Function { name, params, body } = method {
                 methods_map.insert(
                     name.lexeme.clone(),
-                    Rc::new(Function::new(Rc::clone(&self.env), name, params, body)),
+                    Rc::new(Function::new(Rc::clone(&closure), name, params, body)),
                 );
             } else {
                 panic!(
@@ -405,7 +454,7 @@ impl StmtVisitor for Interpreter {
             }
         }
 
-        let class = Class::new(&name.lexeme, methods_map);
+        let class = Class::new(&name.lexeme, superclass, methods_map);
         if self
             .env
             .borrow_mut()
@@ -583,6 +632,10 @@ mod tests {
                 include_str!("../data/class.lox"),
                 include_str!("../data/class.lox.expected"),
             ),
+            (
+                include_str!("../data/inheritance.lox"),
+                include_str!("../data/inheritance.lox.expected"),
+            ),
         ];
 
         for (src, expected) in tests {
@@ -675,5 +728,22 @@ mod tests {
     #[test]
     fn test_can_return_early_from_initializer() {
         test_statements("class Person { init() { return; } }", None, None);
+    }
+
+    #[test]
+    fn test_non_existent_super_method_throws_error() {
+        test_statements(
+            "\
+        class Person {}
+        class Employee < Person {
+            greet() { super.greet(); }
+        }
+
+        var emp = Employee();
+        emp.greet();
+        ",
+            None,
+            Some("Unknown method super.greet"),
+        )
     }
 }

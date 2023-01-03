@@ -151,12 +151,29 @@ impl<'a> StmtVisitor for Resolver<'a> {
         &mut self,
         _: &Stmt,
         name: &Token,
+        superclass: &Expr,
         methods: &[Stmt],
     ) -> Result<Self::Item, LoskError> {
         let current = self.current_cls;
         self.current_cls = ClassType::Class;
         self.declare(name)?;
         self.define(name);
+
+        if let Expr::Variable { name: super_name } = superclass {
+            if name == super_name {
+                return Err(LoskError::runtime_error(
+                    super_name,
+                    "A class can't inherit from itself.",
+                ));
+            }
+            self.visit_variable(superclass, super_name)?;
+            self.begin_scope();
+            self.scopes
+                .last_mut()
+                .unwrap()
+                .insert("super".to_string(), State::Defined);
+        }
+
         self.begin_scope();
         self.scopes
             .last_mut()
@@ -178,7 +195,12 @@ impl<'a> StmtVisitor for Resolver<'a> {
                 )
             }
         }
+
         self.end_scope();
+        if let Expr::Variable { .. } = superclass {
+            self.end_scope();
+        }
+
         self.current_cls = current;
         Ok(())
     }
@@ -302,6 +324,16 @@ impl<'a> ExprVisitor for Resolver<'a> {
             ));
         }
 
+        self.resolve_local(expr, keyword);
+        Ok(())
+    }
+
+    fn visit_super(
+        &mut self,
+        expr: &Expr,
+        keyword: &Token,
+        method: &Token,
+    ) -> Result<Self::Item, LoskError> {
         self.resolve_local(expr, keyword);
         Ok(())
     }
