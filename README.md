@@ -79,6 +79,7 @@ them yet.
       proc-macros to do this task efficiently.
 - [ ] Currently, all the enums (Stmt, Expr, Literal, etc.) contains fields which is not very ergonomics. Convert their
       inner fields into their own struct.
+- [ ] Main CLI for interpreter that can run as REPL environment or with a source file
 
 ### Challenges
 
@@ -99,3 +100,4 @@ to the code. It would be nice to implement these.
       When resolving from interpreter, use that to quickly access the variable. This will be faster than using names.
 - [ ] Rethink about using unique_ptr for statements and expressions
 - [ ] Replace shared_ptr with local_shared_ptr from boost as thread safety is not needed
+- [ ] Add `static` methods to classes, you can use metaclasses for implementation (i.e make class extends instance)

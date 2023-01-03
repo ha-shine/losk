@@ -53,6 +53,7 @@ pub(crate) enum Expr {
     Variable {
         name: Token,
     },
+    Empty,
 }
 
 pub(crate) trait ExprVisitor {
@@ -87,6 +88,7 @@ pub(crate) trait ExprVisitor {
             Expr::Unary { operator, right } => self.visit_unary(expr, operator, right),
             Expr::Variable { name } => self.visit_variable(expr, name),
             Expr::This { keyword } => self.visit_this(expr, keyword),
+            Expr::Empty => self.visit_expr(expr),
         }
     }
     fn visit_assign(
@@ -139,12 +141,13 @@ pub(crate) trait ExprVisitor {
         right: &Expr,
     ) -> Result<Self::Item, LoskError>;
     fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Self::Item, LoskError>;
+    fn visit_empty(&mut self, expr: &Expr) -> Result<Self::Item, LoskError>;
 }
 
 #[allow(dead_code)]
 impl Expr {
     pub(crate) fn nil() -> Self {
-        Expr::literal(Literal::Nil)
+        Expr::Empty
     }
 
     // Creator methods, these could most likely be written as a proc-macro, but I will need

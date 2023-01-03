@@ -14,6 +14,7 @@ enum State {
 enum FunctionType {
     None,
     Function,
+    Initializer,
     Method,
 }
 
@@ -163,7 +164,13 @@ impl<'a> StmtVisitor for Resolver<'a> {
             .insert("this".to_string(), State::Defined);
         for method in methods {
             if let Stmt::Function { name, params, body } = method {
-                self.resolve_function(name, params, body, FunctionType::Method)?;
+                let ty = if name.lexeme == "init" {
+                    FunctionType::Initializer
+                } else {
+                    FunctionType::Method
+                };
+
+                self.resolve_function(name, params, body, ty)?;
             } else {
                 panic!(
                     "Unexpected statement '{:?}' found in class body, expecting a method.",
@@ -204,8 +211,25 @@ impl<'a> StmtVisitor for Resolver<'a> {
         self.visit_expr(expression)
     }
 
-    fn visit_return(&mut self, _: &Stmt, _: &Token, value: &Expr) -> Result<Self::Item, LoskError> {
-        self.visit_expr(value)
+    fn visit_return(
+        &mut self,
+        _: &Stmt,
+        keyword: &Token,
+        value: &Expr,
+    ) -> Result<Self::Item, LoskError> {
+        match value {
+            Expr::Empty => Ok(()),
+            _ => {
+                if let FunctionType::Initializer = self.current_fun {
+                    Err(LoskError::runtime_error(
+                        keyword,
+                        "Can't return a value from an initializer.",
+                    ))
+                } else {
+                    self.visit_expr(value)
+                }
+            }
+        }
     }
 
     fn visit_var(&mut self, _: &Stmt, name: &Token, init: &Expr) -> Result<Self::Item, LoskError> {
@@ -318,6 +342,10 @@ impl<'a> ExprVisitor for Resolver<'a> {
         }
 
         self.resolve_local(expr, name);
+        Ok(())
+    }
+
+    fn visit_empty(&mut self, expr: &Expr) -> Result<Self::Item, LoskError> {
         Ok(())
     }
 }

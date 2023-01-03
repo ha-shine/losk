@@ -347,6 +347,10 @@ impl ExprVisitor for Interpreter {
             Some(value) => Ok(value),
         }
     }
+
+    fn visit_empty(&mut self, _: &Expr) -> Result<Self::Item, LoskError> {
+        Ok(Literal::Nil)
+    }
 }
 
 impl StmtVisitor for Interpreter {
@@ -657,5 +661,19 @@ mod tests {
             None,
             Some("Can't use 'this' outside of a class."),
         );
+    }
+
+    #[test]
+    fn test_cant_return_from_initializer() {
+        test_statements(
+            "class Person { init() { return 1; } }",
+            None,
+            Some("Can't return a value from an initializer."),
+        );
+    }
+
+    #[test]
+    fn test_can_return_early_from_initializer() {
+        test_statements("class Person { init() { return; } }", None, None);
     }
 }
