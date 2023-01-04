@@ -746,4 +746,22 @@ mod tests {
             Some("Unknown method super.greet"),
         )
     }
+
+    #[test]
+    fn test_super_cant_be_used_outside_of_a_class() {
+        test_statements(
+            "print super.cook();",
+            None,
+            Some("Can't use 'super' outside of a class."),
+        );
+    }
+
+    #[test]
+    fn test_super_cant_be_used_inside_a_class_with_no_superclass() {
+        test_statements(
+            "class Person { greet() { super.cook(); } }",
+            None,
+            Some("Can't use 'super' in a class with no superclass."),
+        );
+    }
 }

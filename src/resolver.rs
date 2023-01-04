@@ -22,6 +22,7 @@ enum FunctionType {
 enum ClassType {
     None,
     Class,
+    Subclass,
 }
 
 pub(crate) struct Resolver<'a> {
@@ -166,6 +167,7 @@ impl<'a> StmtVisitor for Resolver<'a> {
                     "A class can't inherit from itself.",
                 ));
             }
+            self.current_cls = ClassType::Subclass;
             self.visit_variable(superclass, super_name)?;
             self.begin_scope();
             self.scopes
@@ -334,8 +336,20 @@ impl<'a> ExprVisitor for Resolver<'a> {
         keyword: &Token,
         method: &Token,
     ) -> Result<Self::Item, LoskError> {
-        self.resolve_local(expr, keyword);
-        Ok(())
+        match self.current_cls {
+            ClassType::None => Err(LoskError::runtime_error(
+                keyword,
+                "Can't use 'super' outside of a class.",
+            )),
+            ClassType::Class => Err(LoskError::runtime_error(
+                keyword,
+                "Can't use 'super' in a class with no superclass.",
+            )),
+            ClassType::Subclass => {
+                self.resolve_local(expr, keyword);
+                Ok(())
+            }
+        }
     }
 
     fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError> {
