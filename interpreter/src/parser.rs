@@ -591,11 +591,7 @@ mod tests {
 
         for (src, expected) in tests {
             let mut scanner = Scanner::new();
-            let tokens = scanner
-                .scan_tokens(src)
-                .take_while(Result::is_ok)
-                .map(Result::unwrap)
-                .collect();
+            let tokens = scanner.scan_tokens(src).collect();
             let mut parser = Parser::new(&tokens);
             let stmts: Vec<Stmt> = vec![expected];
 

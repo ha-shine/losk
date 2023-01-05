@@ -298,12 +298,10 @@ impl<'a> TokenStream<'a> {
 }
 
 impl<'a> Iterator for TokenStream<'a> {
-    type Item = Result<Token, Error>;
+    type Item = Token;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.error.is_some() {
-            return self.error.as_ref().map(|err| Err(err.clone()));
-        } else if self.eof {
+        if self.eof || self.error.is_some() {
             return None;
         }
 
@@ -313,16 +311,16 @@ impl<'a> Iterator for TokenStream<'a> {
             let token = self.scan_token();
             match token {
                 Ok(None) => continue,
-                Ok(Some(token)) => return Some(Ok(token)),
+                Ok(Some(token)) => return Some(token),
                 Err(err) => {
-                    self.error = Some(err.clone());
-                    return Some(Err(err));
+                    self.error = Some(err);
+                    return None;
                 }
             }
         }
 
         self.eof = true;
-        Some(Ok(self.make_token(Type::Eof)))
+        Some(self.make_token(Type::Eof))
     }
 }
 
@@ -340,10 +338,7 @@ mod tests {
         let stream = scanner.scan_tokens(source);
 
         assert_eq!(
-            stream
-                .take_while(Result::is_ok)
-                .map(Result::unwrap)
-                .collect::<Vec<Token>>(),
+            stream.collect::<Vec<Token>>(),
             vec![
                 Token::new(Type::Class, String::from("class"), 0, 0, 0, Literal::Nil),
                 Token::new(Type::Fun, String::from("fun"), 0, 6, 1, Literal::Nil),
@@ -410,13 +405,10 @@ mod tests {
             this is a multiline comment \n\
         */";
         let mut scanner = Scanner::new();
-        let mut stream = scanner.scan_tokens(source);
+        let stream = scanner.scan_tokens(source);
 
         assert_eq!(
-            stream
-                .take_while(Result::is_ok)
-                .map(Result::unwrap)
-                .collect::<Vec<Token>>(),
+            stream.collect::<Vec<Token>>(),
             vec![Token::new(Type::Eof, String::new(), 2, 0, 0, Literal::Nil)]
         );
     }
@@ -425,15 +417,11 @@ mod tests {
     fn test_unterminated_multiline_comment() {
         let source = "/*";
         let mut scanner = Scanner::new();
-        let stream = scanner.scan_tokens(source);
-        let errs: Vec<Error> = stream
-            .skip_while(Result::is_ok)
-            .take(1)
-            .map(Result::unwrap_err)
-            .collect();
+        let mut stream = scanner.scan_tokens(source);
+        stream.by_ref().last();
 
         assert_eq!(
-            &errs[0],
+            stream.error().unwrap(),
             &ScannerError {
                 line: 0,
                 msg: String::from("Unterminated block comment.")
@@ -445,15 +433,11 @@ mod tests {
     fn test_unterminated_string() {
         let source = "\"hello";
         let mut scanner = Scanner::new();
-        let stream = scanner.scan_tokens(source);
-        let errs: Vec<Error> = stream
-            .skip_while(Result::is_ok)
-            .take(1)
-            .map(Result::unwrap_err)
-            .collect();
+        let mut stream = scanner.scan_tokens(source);
+        stream.by_ref().last();
 
         assert_eq!(
-            &errs[0],
+            stream.error().unwrap(),
             &ScannerError {
                 line: 0,
                 msg: String::from("Unterminated string.")
