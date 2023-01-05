@@ -1,11 +1,12 @@
 use crate::ast::{Expr, Stmt};
 use crate::error::Error;
-use core::{Token, Type};
+use core::{Token, TokenStream, Type};
 use std::rc::Rc;
 
 pub struct Parser<'a> {
-    tokens: &'a Vec<Token>,
-    current: usize,
+    tokens: TokenStream<'a>,
+    prev: Option<Token>,
+    next: Option<Token>,
 }
 
 // A wrapper over vector of statements to not leak Stmt to public
@@ -27,8 +28,14 @@ enum FunctionKind {
 }
 
 impl<'a> Parser<'a> {
-    pub fn new(tokens: &'a Vec<Token>) -> Self {
-        Parser { tokens, current: 0 }
+    pub fn new(mut tokens: TokenStream<'a>) -> Self {
+        let next = tokens.by_ref().take(1).last();
+
+        Parser {
+            tokens,
+            prev: None,
+            next,
+        }
     }
 
     pub fn parse(&mut self) -> ParserResult {
@@ -40,6 +47,10 @@ impl<'a> Parser<'a> {
                 Ok(stmt) => statements.push(stmt),
                 Err(err) => errs.push(err),
             };
+        }
+
+        if let Some(err) = self.tokens.error() {
+            errs.push(Error::from(err.clone()))
         }
 
         if errs.is_empty() {
@@ -475,18 +486,19 @@ impl<'a> Parser<'a> {
 
     fn advance(&mut self) -> &Token {
         if !self.is_at_end() {
-            self.current += 1;
+            self.prev = self.next.take();
+            self.next = self.tokens.next();
         }
 
         self.previous()
     }
 
     fn peek(&self) -> &Token {
-        &self.tokens[self.current]
+        self.next.as_ref().unwrap()
     }
 
     fn previous(&self) -> &Token {
-        &self.tokens[self.current - 1]
+        self.prev.as_ref().unwrap()
     }
 
     fn match_either(&mut self, types: &[Type]) -> bool {
@@ -591,8 +603,7 @@ mod tests {
 
         for (src, expected) in tests {
             let mut scanner = Scanner::new();
-            let tokens = scanner.scan_tokens(src).collect();
-            let mut parser = Parser::new(&tokens);
+            let mut parser = Parser::new(scanner.scan_tokens(src));
             let stmts: Vec<Stmt> = vec![expected];
 
             assert_eq!(parser.parse().unwrap(), StmtStream(stmts));

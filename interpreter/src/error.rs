@@ -26,6 +26,15 @@ pub enum Error {
     Return(ReturnValue),
 }
 
+impl From<CoreError> for Error {
+    fn from(value: CoreError) -> Self {
+        Error::ScannerError {
+            line: value.line(),
+            source: value,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct ReturnValue {
     pub(crate) value: Value,

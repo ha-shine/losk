@@ -81,8 +81,6 @@ them yet.
 - [ ] Currently, all the enums (Stmt, Expr, Literal, etc.) contains fields which is not very ergonomics. Convert their
       inner fields into their own struct.
 - [ ] Main CLI for interpreter that can run as REPL environment or with a source file
-- [ ] Scanner is a good candidate for rewriting the output as an iterator. The iterator will have mutable access to
-      the scanner itself to increment token index.
 
 ## Challenges
 
