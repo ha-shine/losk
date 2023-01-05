@@ -90,7 +90,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn resolve_local(&mut self, expr: &Expr, token: &Token) {
+    fn resolve_local(&mut self, token: &Token) {
         for i in (0..self.scopes.len()).rev() {
             if self.scopes[i].contains_key(&token.lexeme) {
                 self.interpreter.resolve(token, self.scopes.len() - 1 - i);
@@ -101,7 +101,7 @@ impl<'a> Resolver<'a> {
 
     fn resolve_function(
         &mut self,
-        name: &Token,
+        _name: &Token,
         params: &[Token],
         body: &[Stmt],
         ty: FunctionType,
@@ -125,20 +125,19 @@ impl<'a> Resolver<'a> {
 impl<'a> StmtVisitor for Resolver<'a> {
     type Item = ();
 
-    fn visit_block(&mut self, stmt: &Stmt, statements: &[Stmt]) -> Result<Self::Item, Error> {
+    fn visit_block(&mut self, statements: &[Stmt]) -> Result<Self::Item, Error> {
         self.begin_scope();
         self.resolve_stmts(statements)?;
         self.end_scope();
         Ok(())
     }
 
-    fn visit_expression(&mut self, _: &Stmt, expression: &Expr) -> Result<Self::Item, Error> {
+    fn visit_expression(&mut self, expression: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(expression)
     }
 
     fn visit_function(
         &mut self,
-        _: &Stmt,
         name: &Token,
         params: &[Token],
         body: &[Stmt],
@@ -150,7 +149,6 @@ impl<'a> StmtVisitor for Resolver<'a> {
 
     fn visit_class(
         &mut self,
-        _: &Stmt,
         name: &Token,
         superclass: &Expr,
         methods: &[Stmt],
@@ -168,7 +166,7 @@ impl<'a> StmtVisitor for Resolver<'a> {
                 ));
             }
             self.current_cls = ClassType::Subclass;
-            self.visit_variable(superclass, super_name)?;
+            self.visit_variable(super_name)?;
             self.begin_scope();
             self.scopes
                 .last_mut()
@@ -209,7 +207,6 @@ impl<'a> StmtVisitor for Resolver<'a> {
 
     fn visit_if(
         &mut self,
-        _: &Stmt,
         expression: &Expr,
         _: &Token,
         then_branch: &Stmt,
@@ -222,7 +219,6 @@ impl<'a> StmtVisitor for Resolver<'a> {
 
     fn visit_while(
         &mut self,
-        _: &Stmt,
         condition: &Expr,
         body: &Stmt,
         _: &Token,
@@ -231,16 +227,11 @@ impl<'a> StmtVisitor for Resolver<'a> {
         self.visit_stmt(body)
     }
 
-    fn visit_print(&mut self, _: &Stmt, expression: &Expr) -> Result<Self::Item, Error> {
+    fn visit_print(&mut self, expression: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(expression)
     }
 
-    fn visit_return(
-        &mut self,
-        _: &Stmt,
-        keyword: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_return(&mut self, keyword: &Token, value: &Expr) -> Result<Self::Item, Error> {
         match value {
             Expr::Empty => Ok(()),
             _ => {
@@ -256,7 +247,7 @@ impl<'a> StmtVisitor for Resolver<'a> {
         }
     }
 
-    fn visit_var(&mut self, _: &Stmt, name: &Token, init: &Expr) -> Result<Self::Item, Error> {
+    fn visit_var(&mut self, name: &Token, init: &Expr) -> Result<Self::Item, Error> {
         self.declare(name)?;
         self.visit_expr(init)?;
         self.define(name);
@@ -267,35 +258,18 @@ impl<'a> StmtVisitor for Resolver<'a> {
 impl<'a> ExprVisitor for Resolver<'a> {
     type Item = ();
 
-    fn visit_assign(
-        &mut self,
-        expr: &Expr,
-        name: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(value)?;
-        self.resolve_local(expr, name);
+        self.resolve_local(name);
         Ok(())
     }
 
-    fn visit_binary(
-        &mut self,
-        _: &Expr,
-        left: &Expr,
-        _: &Token,
-        right: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_binary(&mut self, left: &Expr, _: &Token, right: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(left)?;
         self.visit_expr(right)
     }
 
-    fn visit_call(
-        &mut self,
-        _: &Expr,
-        callee: &Expr,
-        _: &Token,
-        args: &[Expr],
-    ) -> Result<Self::Item, Error> {
+    fn visit_call(&mut self, callee: &Expr, _: &Token, args: &[Expr]) -> Result<Self::Item, Error> {
         self.visit_expr(callee)?;
         for arg in args {
             self.visit_expr(arg)?;
@@ -303,22 +277,16 @@ impl<'a> ExprVisitor for Resolver<'a> {
         Ok(())
     }
 
-    fn visit_get(&mut self, _: &Expr, object: &Expr, _: &Token) -> Result<Self::Item, Error> {
+    fn visit_get(&mut self, object: &Expr, _: &Token) -> Result<Self::Item, Error> {
         self.visit_expr(object)
     }
 
-    fn visit_set(
-        &mut self,
-        _: &Expr,
-        object: &Expr,
-        _: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_set(&mut self, object: &Expr, _: &Token, value: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(object)?;
         self.visit_expr(value)
     }
 
-    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, Error> {
+    fn visit_this(&mut self, keyword: &Token) -> Result<Self::Item, Error> {
         if let ClassType::None = self.current_cls {
             return Err(Error::runtime_error(
                 keyword,
@@ -326,16 +294,11 @@ impl<'a> ExprVisitor for Resolver<'a> {
             ));
         }
 
-        self.resolve_local(expr, keyword);
+        self.resolve_local(keyword);
         Ok(())
     }
 
-    fn visit_super(
-        &mut self,
-        expr: &Expr,
-        keyword: &Token,
-        method: &Token,
-    ) -> Result<Self::Item, Error> {
+    fn visit_super(&mut self, keyword: &Token, _method: &Token) -> Result<Self::Item, Error> {
         match self.current_cls {
             ClassType::None => Err(Error::runtime_error(
                 keyword,
@@ -346,36 +309,30 @@ impl<'a> ExprVisitor for Resolver<'a> {
                 "Can't use 'super' in a class with no superclass.",
             )),
             ClassType::Subclass => {
-                self.resolve_local(expr, keyword);
+                self.resolve_local(keyword);
                 Ok(())
             }
         }
     }
 
-    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, Error> {
+    fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(expression)
     }
 
-    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, Error> {
+    fn visit_literal(&mut self, _value: &Literal) -> Result<Self::Item, Error> {
         Ok(())
     }
 
-    fn visit_logical(
-        &mut self,
-        _: &Expr,
-        left: &Expr,
-        _: &Token,
-        right: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_logical(&mut self, left: &Expr, _: &Token, right: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(left)?;
         self.visit_expr(right)
     }
 
-    fn visit_unary(&mut self, _: &Expr, _: &Token, right: &Expr) -> Result<Self::Item, Error> {
+    fn visit_unary(&mut self, _: &Token, right: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(right)
     }
 
-    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Self::Item, Error> {
+    fn visit_variable(&mut self, name: &Token) -> Result<Self::Item, Error> {
         // Check if variable is being accessed in its own initializer,
         // which means the variables is defined, but value not bound yet
         if let Some(last) = self.scopes.last() {
@@ -387,11 +344,11 @@ impl<'a> ExprVisitor for Resolver<'a> {
             }
         }
 
-        self.resolve_local(expr, name);
+        self.resolve_local(name);
         Ok(())
     }
 
-    fn visit_empty(&mut self, expr: &Expr) -> Result<Self::Item, Error> {
+    fn visit_empty(&mut self) -> Result<Self::Item, Error> {
         Ok(())
     }
 }

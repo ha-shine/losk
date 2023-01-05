@@ -65,94 +65,86 @@ pub(crate) trait ExprVisitor {
 
     fn visit_expr(&mut self, expr: &Expr) -> Result<Self::Item, Error> {
         match expr {
-            Expr::Assign { name, value } => self.visit_assign(expr, name, value),
+            Expr::Assign { name, value } => self.visit_assign(name, value),
             Expr::Binary {
                 left,
                 operator,
                 right,
-            } => self.visit_binary(expr, left, operator, right),
+            } => self.visit_binary(left, operator, right),
             Expr::Call {
                 callee,
                 paren,
                 args,
-            } => self.visit_call(expr, callee, paren, args),
-            Expr::Get { object, name } => self.visit_get(expr, object, name),
+            } => self.visit_call(callee, paren, args),
+            Expr::Get { object, name } => self.visit_get(object, name),
             Expr::Set {
                 object,
                 name,
                 value,
-            } => self.visit_set(expr, object, name, value),
-            Expr::Grouping { expression } => self.visit_grouping(expr, expression),
-            Expr::Literal { value } => self.visit_literal(expr, value),
+            } => self.visit_set(object, name, value),
+            Expr::Grouping { expression } => self.visit_grouping(expression),
+            Expr::Literal { value } => self.visit_literal(value),
             Expr::Logical {
                 left,
                 operator,
                 right,
-            } => self.visit_logical(expr, left, operator, right),
-            Expr::Unary { operator, right } => self.visit_unary(expr, operator, right),
-            Expr::Variable { name } => self.visit_variable(expr, name),
-            Expr::This { keyword } => self.visit_this(expr, keyword),
-            Expr::Super { keyword, method } => self.visit_super(expr, keyword, method),
-            Expr::Empty => self.visit_empty(expr),
+            } => self.visit_logical(left, operator, right),
+            Expr::Unary { operator, right } => self.visit_unary(operator, right),
+            Expr::Variable { name } => self.visit_variable(name),
+            Expr::This { keyword } => self.visit_this(keyword),
+            Expr::Super { keyword, method } => self.visit_super(keyword, method),
+            Expr::Empty => self.visit_empty(),
         }
     }
     fn visit_assign(
         &mut self,
-        expr: &Expr,
         name: &Token,
         value: &Expr,
     ) -> Result<Self::Item, Error>;
     fn visit_binary(
         &mut self,
-        expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
     ) -> Result<Self::Item, Error>;
     fn visit_call(
         &mut self,
-        expr: &Expr,
         callee: &Expr,
         paren: &Token,
         args: &[Expr],
     ) -> Result<Self::Item, Error>;
     fn visit_get(
         &mut self,
-        expr: &Expr,
         object: &Expr,
         name: &Token,
     ) -> Result<Self::Item, Error>;
     fn visit_set(
         &mut self,
-        expr: &Expr,
         object: &Expr,
         name: &Token,
         value: &Expr,
     ) -> Result<Self::Item, Error>;
-    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, Error>;
+    fn visit_this(&mut self, keyword: &Token) -> Result<Self::Item, Error>;
     fn visit_super(
         &mut self,
-        expr: &Expr,
         keyword: &Token,
         method: &Token,
     ) -> Result<Self::Item, Error>;
-    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, Error>;
-    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, Error>;
+    fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, Error>;
+    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, Error>;
     fn visit_logical(
         &mut self,
-        expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
     ) -> Result<Self::Item, Error>;
     fn visit_unary(
         &mut self,
-        expr: &Expr,
         operator: &Token,
         right: &Expr,
     ) -> Result<Self::Item, Error>;
-    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Self::Item, Error>;
-    fn visit_empty(&mut self, expr: &Expr) -> Result<Self::Item, Error>;
+    fn visit_variable(&mut self, name: &Token) -> Result<Self::Item, Error>;
+    fn visit_empty(&mut self) -> Result<Self::Item, Error>;
 }
 
 #[allow(dead_code)]
@@ -283,51 +275,48 @@ pub(crate) trait StmtVisitor {
 
     fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Self::Item, Error> {
         match stmt {
-            Stmt::Expression { expression } => self.visit_expression(stmt, expression),
-            Stmt::Block { statements } => self.visit_block(stmt, statements),
-            Stmt::Function { name, params, body } => self.visit_function(stmt, name, params, body),
+            Stmt::Expression { expression } => self.visit_expression(expression),
+            Stmt::Block { statements } => self.visit_block(statements),
+            Stmt::Function { name, params, body } => self.visit_function(name, params, body),
             Stmt::Class {
                 name,
                 superclass,
                 methods,
-            } => self.visit_class(stmt, name, superclass, methods),
+            } => self.visit_class(name, superclass, methods),
             Stmt::If {
                 expression,
                 token,
                 then_branch,
                 else_branch,
-            } => self.visit_if(stmt, expression, token, then_branch, else_branch),
+            } => self.visit_if(expression, token, then_branch, else_branch),
             Stmt::While {
                 condition,
                 body,
                 token,
-            } => self.visit_while(stmt, condition, body, token),
-            Stmt::Print { expression } => self.visit_print(stmt, expression),
-            Stmt::Return { keyword, value } => self.visit_return(stmt, keyword, value),
-            Stmt::Var { name, init } => self.visit_var(stmt, name, init),
+            } => self.visit_while(condition, body, token),
+            Stmt::Print { expression } => self.visit_print(expression),
+            Stmt::Return { keyword, value } => self.visit_return(keyword, value),
+            Stmt::Var { name, init } => self.visit_var(name, init),
         }
     }
 
-    fn visit_block(&mut self, stmt: &Stmt, statements: &[Stmt]) -> Result<Self::Item, Error>;
-    fn visit_expression(&mut self, stmt: &Stmt, expression: &Expr)
+    fn visit_block(&mut self, statements: &[Stmt]) -> Result<Self::Item, Error>;
+    fn visit_expression(&mut self, expression: &Expr)
         -> Result<Self::Item, Error>;
     fn visit_function(
         &mut self,
-        stmt: &Stmt,
         name: &Token,
         params: &[Token],
         body: &[Stmt],
     ) -> Result<Self::Item, Error>;
     fn visit_class(
         &mut self,
-        stmt: &Stmt,
         name: &Token,
         superclass: &Expr,
         methods: &[Stmt],
     ) -> Result<Self::Item, Error>;
     fn visit_if(
         &mut self,
-        stmt: &Stmt,
         expression: &Expr,
         token: &Token,
         then_branch: &Stmt,
@@ -335,21 +324,18 @@ pub(crate) trait StmtVisitor {
     ) -> Result<Self::Item, Error>;
     fn visit_while(
         &mut self,
-        stmt: &Stmt,
         condition: &Expr,
         body: &Stmt,
         token: &Token,
     ) -> Result<Self::Item, Error>;
-    fn visit_print(&mut self, stmt: &Stmt, expression: &Expr) -> Result<Self::Item, Error>;
+    fn visit_print(&mut self, expression: &Expr) -> Result<Self::Item, Error>;
     fn visit_return(
         &mut self,
-        stmt: &Stmt,
         keyword: &Token,
         value: &Expr,
     ) -> Result<Self::Item, Error>;
     fn visit_var(
         &mut self,
-        stmt: &Stmt,
         name: &Token,
         init: &Expr,
     ) -> Result<Self::Item, Error>;

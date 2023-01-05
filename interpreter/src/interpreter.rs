@@ -82,12 +82,7 @@ impl Interpreter {
 impl ExprVisitor for Interpreter {
     type Item = Literal;
 
-    fn visit_assign(
-        &mut self,
-        expr: &Expr,
-        name: &Token,
-        value: &Expr,
-    ) -> Result<Literal, Error> {
+    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Literal, Error> {
         let value = self.visit_expr(value)?;
 
         match self.locals.get(&name.idx) {
@@ -110,7 +105,6 @@ impl ExprVisitor for Interpreter {
 
     fn visit_binary(
         &mut self,
-        expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
@@ -121,10 +115,7 @@ impl ExprVisitor for Interpreter {
         match operator.ty {
             Type::Minus => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left - right)),
-                _ => Err(Error::runtime_error(
-                    operator,
-                    "Operands must be numbers.",
-                )),
+                _ => Err(Error::runtime_error(operator, "Operands must be numbers.")),
             },
             Type::Plus => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => {
@@ -138,17 +129,11 @@ impl ExprVisitor for Interpreter {
             },
             Type::Slash => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left / right)),
-                _ => Err(Error::runtime_error(
-                    operator,
-                    "Operands must be numbers.",
-                )),
+                _ => Err(Error::runtime_error(operator, "Operands must be numbers.")),
             },
             Type::Star => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left * right)),
-                _ => Err(Error::runtime_error(
-                    operator,
-                    "Operands must be numbers.",
-                )),
+                _ => Err(Error::runtime_error(operator, "Operands must be numbers.")),
             },
             Type::Greater => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left > right)),
@@ -190,7 +175,6 @@ impl ExprVisitor for Interpreter {
 
     fn visit_call(
         &mut self,
-        expr: &Expr,
         callee: &Expr,
         paren: &Token,
         args: &[Expr],
@@ -223,12 +207,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_get(
-        &mut self,
-        expr: &Expr,
-        object: &Expr,
-        name: &Token,
-    ) -> Result<Self::Item, Error> {
+    fn visit_get(&mut self, object: &Expr, name: &Token) -> Result<Self::Item, Error> {
         if let Literal::Instance(instance) = self.visit_expr(object)? {
             match Instance::get(&instance, &name.lexeme) {
                 Some(val) => Ok(val),
@@ -247,7 +226,6 @@ impl ExprVisitor for Interpreter {
 
     fn visit_set(
         &mut self,
-        _: &Expr,
         object: &Expr,
         name: &Token,
         value: &Expr,
@@ -257,14 +235,11 @@ impl ExprVisitor for Interpreter {
                 let value = self.visit_expr(value)?;
                 Ok(instance.borrow_mut().set(&name.lexeme, value))
             }
-            _ => Err(Error::runtime_error(
-                name,
-                "Only instances have fields.",
-            )),
+            _ => Err(Error::runtime_error(name, "Only instances have fields.")),
         }
     }
 
-    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, Error> {
+    fn visit_this(&mut self, keyword: &Token) -> Result<Self::Item, Error> {
         match self.lookup_variable(keyword) {
             Some(val) => Ok(val),
             None => Err(Error::runtime_error(
@@ -274,12 +249,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_super(
-        &mut self,
-        expr: &Expr,
-        keyword: &Token,
-        method: &Token,
-    ) -> Result<Self::Item, Error> {
+    fn visit_super(&mut self, keyword: &Token, method: &Token) -> Result<Self::Item, Error> {
         let dist = self.locals.get(&keyword.idx).unwrap();
         let superclass = self.env.borrow().get_at(*dist, "super").unwrap();
         let this = self.env.borrow().get_at(*dist - 1, "this").unwrap();
@@ -310,17 +280,16 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, Error> {
+    fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(expression)
     }
 
-    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, Error> {
+    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, Error> {
         Ok(value.clone())
     }
 
     fn visit_logical(
         &mut self,
-        expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
@@ -357,12 +326,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_unary(
-        &mut self,
-        expr: &Expr,
-        operator: &Token,
-        right: &Expr,
-    ) -> Result<Literal, Error> {
+    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Literal, Error> {
         let right = self.visit_expr(right)?;
         match (operator.ty, right) {
             (Type::Minus, Literal::Num(val)) => Ok(Literal::from(-val)),
@@ -374,7 +338,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Literal, Error> {
+    fn visit_variable(&mut self, name: &Token) -> Result<Literal, Error> {
         match self.lookup_variable(name) {
             None => Err(Error::runtime_error(
                 name,
@@ -384,7 +348,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_empty(&mut self, _: &Expr) -> Result<Self::Item, Error> {
+    fn visit_empty(&mut self) -> Result<Self::Item, Error> {
         Ok(Literal::Nil)
     }
 }
@@ -392,23 +356,18 @@ impl ExprVisitor for Interpreter {
 impl StmtVisitor for Interpreter {
     type Item = ();
 
-    fn visit_block(&mut self, expr: &Stmt, statements: &[Stmt]) -> Result<(), Error> {
+    fn visit_block(&mut self, statements: &[Stmt]) -> Result<(), Error> {
         let env = Rc::new(RefCell::new(Environment::with(self.env.clone())));
         self.execute_block_with_env(statements, env)
     }
 
-    fn visit_expression(
-        &mut self,
-        expr: &Stmt,
-        expression: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_expression(&mut self, expression: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(expression)?;
         Ok(())
     }
 
     fn visit_function(
         &mut self,
-        expr: &Stmt,
         name: &Token,
         params: &[Token],
         body: &[Stmt],
@@ -421,7 +380,6 @@ impl StmtVisitor for Interpreter {
 
     fn visit_class(
         &mut self,
-        expr: &Stmt,
         name: &Token,
         superclass: &Expr,
         methods: &[Stmt],
@@ -469,7 +427,6 @@ impl StmtVisitor for Interpreter {
 
     fn visit_if(
         &mut self,
-        expr: &Stmt,
         expression: &Expr,
         token: &Token,
         then_branch: &Stmt,
@@ -486,13 +443,7 @@ impl StmtVisitor for Interpreter {
         }
     }
 
-    fn visit_while(
-        &mut self,
-        expr: &Stmt,
-        condition: &Expr,
-        body: &Stmt,
-        token: &Token,
-    ) -> Result<(), Error> {
+    fn visit_while(&mut self, condition: &Expr, body: &Stmt, token: &Token) -> Result<(), Error> {
         loop {
             match self.visit_expr(condition) {
                 Ok(Literal::Bool(true)) => self.visit_stmt(body)?,
@@ -508,23 +459,18 @@ impl StmtVisitor for Interpreter {
         }
     }
 
-    fn visit_print(&mut self, expr: &Stmt, expression: &Expr) -> Result<(), Error> {
+    fn visit_print(&mut self, expression: &Expr) -> Result<(), Error> {
         let value = self.visit_expr(expression)?;
         writeln!(self.stdout.borrow_mut(), "{}", value).unwrap();
         Ok(())
     }
 
-    fn visit_return(
-        &mut self,
-        expr: &Stmt,
-        keyword: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error> {
+    fn visit_return(&mut self, _: &Token, value: &Expr) -> Result<Self::Item, Error> {
         let value = self.visit_expr(value)?;
         Err(Error::return_value(value))
     }
 
-    fn visit_var(&mut self, expr: &Stmt, name: &Token, expression: &Expr) -> Result<(), Error> {
+    fn visit_var(&mut self, name: &Token, expression: &Expr) -> Result<(), Error> {
         let value = self.visit_expr(expression)?;
         self.env.borrow_mut().define(&name.lexeme, value);
         Ok(())

@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Stmt};
 use crate::error::Error;
-use crate::token::{Literal, Token, Type};
+use crate::token::{Token, Type};
 use std::rc::Rc;
 
 pub struct Parser<'a> {
@@ -274,10 +274,7 @@ impl<'a> Parser<'a> {
                     name,
                     value,
                 }),
-                _ => Err(Error::parser_error(
-                    &equals,
-                    "Invalid assignment target.",
-                )),
+                _ => Err(Error::parser_error(&equals, "Invalid assignment target.")),
             }
         } else {
             Ok(expr)
