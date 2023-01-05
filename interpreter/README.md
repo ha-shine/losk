@@ -84,7 +84,7 @@ them yet.
 - [ ] Scanner is a good candidate for rewriting the output as an iterator. The iterator will have mutable access to
       the scanner itself to increment token index.
 
-### Challenges
+## Challenges
 
 And lastly, there are challenges in the book that I haven't gotten around to doing yet. The book encourages to do the
 challenges in a separate branch since the chapters assume that you have not done any modification (including challenges)

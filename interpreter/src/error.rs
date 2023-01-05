@@ -2,7 +2,8 @@ use crate::token::{Literal, Token};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
-pub enum LoskError {
+#[allow(clippy::enum_variant_names)]
+pub enum Error {
     #[error("[line {line:?}] scanner error: {msg:?}")]
     ScannerError { line: usize, msg: String },
 
@@ -28,9 +29,9 @@ pub struct ReturnValue {
     pub(crate) value: Literal,
 }
 
-impl LoskError {
+impl Error {
     pub(crate) fn parser_error(token: &Token, msg: &str) -> Self {
-        LoskError::ParserError {
+        Error::ParserError {
             token: token.clone(),
             line: token.line,
             msg: String::from(msg),
@@ -38,13 +39,13 @@ impl LoskError {
     }
 
     pub(crate) fn runtime_error(token: &Token, msg: &str) -> Self {
-        LoskError::RuntimeError {
+        Error::RuntimeError {
             token: token.clone(),
             msg: String::from(msg),
         }
     }
 
     pub(crate) fn return_value(value: Literal) -> Self {
-        LoskError::Return(ReturnValue { value })
+        Error::Return(ReturnValue { value })
     }
 }

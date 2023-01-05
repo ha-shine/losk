@@ -1,4 +1,4 @@
-use crate::errors::LoskError;
+use crate::error::Error;
 use crate::token::{Literal, Token};
 use std::rc::Rc;
 
@@ -63,7 +63,7 @@ pub(crate) enum Expr {
 pub(crate) trait ExprVisitor {
     type Item;
 
-    fn visit_expr(&mut self, expr: &Expr) -> Result<Self::Item, LoskError> {
+    fn visit_expr(&mut self, expr: &Expr) -> Result<Self::Item, Error> {
         match expr {
             Expr::Assign { name, value } => self.visit_assign(expr, name, value),
             Expr::Binary {
@@ -101,58 +101,58 @@ pub(crate) trait ExprVisitor {
         expr: &Expr,
         name: &Token,
         value: &Expr,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_binary(
         &mut self,
         expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_call(
         &mut self,
         expr: &Expr,
         callee: &Expr,
         paren: &Token,
         args: &[Expr],
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_get(
         &mut self,
         expr: &Expr,
         object: &Expr,
         name: &Token,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_set(
         &mut self,
         expr: &Expr,
         object: &Expr,
         name: &Token,
         value: &Expr,
-    ) -> Result<Self::Item, LoskError>;
-    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
+    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, Error>;
     fn visit_super(
         &mut self,
         expr: &Expr,
         keyword: &Token,
         method: &Token,
-    ) -> Result<Self::Item, LoskError>;
-    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError>;
-    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
+    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, Error>;
+    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, Error>;
     fn visit_logical(
         &mut self,
         expr: &Expr,
         left: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_unary(
         &mut self,
         expr: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Self::Item, LoskError>;
-    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Self::Item, LoskError>;
-    fn visit_empty(&mut self, expr: &Expr) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
+    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Self::Item, Error>;
+    fn visit_empty(&mut self, expr: &Expr) -> Result<Self::Item, Error>;
 }
 
 #[allow(dead_code)]
@@ -281,7 +281,7 @@ pub(crate) enum Stmt {
 pub(crate) trait StmtVisitor {
     type Item;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Self::Item, LoskError> {
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Self::Item, Error> {
         match stmt {
             Stmt::Expression { expression } => self.visit_expression(stmt, expression),
             Stmt::Block { statements } => self.visit_block(stmt, statements),
@@ -308,23 +308,23 @@ pub(crate) trait StmtVisitor {
         }
     }
 
-    fn visit_block(&mut self, stmt: &Stmt, statements: &[Stmt]) -> Result<Self::Item, LoskError>;
+    fn visit_block(&mut self, stmt: &Stmt, statements: &[Stmt]) -> Result<Self::Item, Error>;
     fn visit_expression(&mut self, stmt: &Stmt, expression: &Expr)
-        -> Result<Self::Item, LoskError>;
+        -> Result<Self::Item, Error>;
     fn visit_function(
         &mut self,
         stmt: &Stmt,
         name: &Token,
         params: &[Token],
         body: &[Stmt],
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_class(
         &mut self,
         stmt: &Stmt,
         name: &Token,
         superclass: &Expr,
         methods: &[Stmt],
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_if(
         &mut self,
         stmt: &Stmt,
@@ -332,27 +332,27 @@ pub(crate) trait StmtVisitor {
         token: &Token,
         then_branch: &Stmt,
         else_branch: &Stmt,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_while(
         &mut self,
         stmt: &Stmt,
         condition: &Expr,
         body: &Stmt,
         token: &Token,
-    ) -> Result<Self::Item, LoskError>;
-    fn visit_print(&mut self, stmt: &Stmt, expression: &Expr) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
+    fn visit_print(&mut self, stmt: &Stmt, expression: &Expr) -> Result<Self::Item, Error>;
     fn visit_return(
         &mut self,
         stmt: &Stmt,
         keyword: &Token,
         value: &Expr,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
     fn visit_var(
         &mut self,
         stmt: &Stmt,
         name: &Token,
         init: &Expr,
-    ) -> Result<Self::Item, LoskError>;
+    ) -> Result<Self::Item, Error>;
 }
 
 impl Stmt {

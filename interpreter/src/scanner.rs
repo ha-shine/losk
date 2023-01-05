@@ -1,6 +1,6 @@
 use phf::{phf_map, Map};
 
-use crate::errors::LoskError;
+use crate::error::Error;
 use crate::token::{Literal, Token, Type};
 
 pub struct Scanner<'a> {
@@ -41,7 +41,7 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, LoskError> {
+    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, Error> {
         let mut tokens = vec![];
         while !self.is_at_end() {
             self.start = self.current;
@@ -52,7 +52,7 @@ impl<'a> Scanner<'a> {
         Ok(tokens)
     }
 
-    fn scan_token(&mut self, tokens: &mut Vec<Token>) -> Result<(), LoskError> {
+    fn scan_token(&mut self, tokens: &mut Vec<Token>) -> Result<(), Error> {
         let c = self.advance();
 
         match c {
@@ -152,7 +152,7 @@ impl<'a> Scanner<'a> {
         Ok(())
     }
 
-    fn string(&mut self) -> Result<Token, LoskError> {
+    fn string(&mut self) -> Result<Token, Error> {
         while self.peek() != '"' && !self.is_at_end() {
             if self.peek() == '\n' {
                 self.line += 1;
@@ -173,7 +173,7 @@ impl<'a> Scanner<'a> {
         ))
     }
 
-    fn number(&mut self) -> Result<Token, LoskError> {
+    fn number(&mut self) -> Result<Token, Error> {
         while self.peek().is_ascii_digit() {
             self.advance();
         }
@@ -192,7 +192,7 @@ impl<'a> Scanner<'a> {
         ))
     }
 
-    fn identifier(&mut self) -> Result<Token, LoskError> {
+    fn identifier(&mut self) -> Result<Token, Error> {
         while self.peek().is_alphanumeric() {
             self.advance();
         }
@@ -267,8 +267,8 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn error(&self, msg: &str) -> LoskError {
-        LoskError::ScannerError {
+    fn error(&self, msg: &str) -> Error {
+        Error::ScannerError {
             line: self.line,
             msg: String::from(msg),
         }
@@ -277,7 +277,7 @@ impl<'a> Scanner<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::scanner::LoskError::ScannerError;
+    use crate::scanner::Error::ScannerError;
     use crate::scanner::Scanner;
     use crate::token::{Literal, Token, Type};
 

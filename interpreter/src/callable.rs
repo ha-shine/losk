@@ -1,6 +1,6 @@
 use crate::ast::Stmt;
 use crate::env::Environment;
-use crate::errors::LoskError;
+use crate::error::Error;
 use crate::interpreter::Interpreter;
 use crate::token::{Literal, Token};
 use std::cell::RefCell;
@@ -25,7 +25,7 @@ pub(crate) trait Callable {
         self: Rc<Self>,
         interpreter: &mut Interpreter,
         args: &[Literal],
-    ) -> Result<Literal, LoskError>;
+    ) -> Result<Literal, Error>;
 
     // This is a bit hacky
     fn as_class(self: Rc<Self>) -> Option<Rc<Class>>;
@@ -37,7 +37,7 @@ impl Debug for dyn Callable {
     }
 }
 
-pub(crate) type BoxedFunction = Box<dyn Fn(&[Literal]) -> Result<Literal, LoskError>>;
+pub(crate) type BoxedFunction = Box<dyn Fn(&[Literal]) -> Result<Literal, Error>>;
 
 // `NativeCallable` bridges the native rust calls and the Losk interpreter environment.
 // This implements callable and all of these trait objects will live in the global namespace.
@@ -66,7 +66,7 @@ impl Callable for Native {
         self: Rc<Self>,
         _: &mut Interpreter,
         args: &[Literal],
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         (self.func)(args)
     }
 
@@ -109,7 +109,7 @@ fn execute_function(
     closure: Rc<RefCell<Environment>>,
     interpreter: &mut Interpreter,
     args: &[Literal],
-) -> Result<Literal, LoskError> {
+) -> Result<Literal, Error> {
     let mut env = Environment::with(closure);
     for (param, arg) in function.params.iter().zip(args) {
         env.define(&param.lexeme, arg.clone());
@@ -117,7 +117,7 @@ fn execute_function(
 
     match interpreter.execute_block_with_env(&function.body, Rc::new(RefCell::new(env))) {
         Ok(()) => Ok(Literal::Nil),
-        Err(LoskError::Return(value)) => Ok(value.value),
+        Err(Error::Return(value)) => Ok(value.value),
         Err(err) => Err(err),
     }
 }
@@ -139,7 +139,7 @@ impl Callable for Function {
         self: Rc<Self>,
         interpreter: &mut Interpreter,
         args: &[Literal],
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let closure = Rc::clone(&self.closure);
         execute_function(self, closure, interpreter, args)
     }
@@ -164,7 +164,11 @@ pub(crate) struct Method {
 }
 
 impl Method {
-    pub(crate) fn bind(function: Rc<Function>, instance: Rc<RefCell<Instance>>, is_init: bool) -> Self {
+    pub(crate) fn bind(
+        function: Rc<Function>,
+        instance: Rc<RefCell<Instance>>,
+        is_init: bool,
+    ) -> Self {
         let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(
             &function.closure,
         ))));
@@ -193,7 +197,7 @@ impl Callable for Method {
         self: Rc<Self>,
         interpreter: &mut Interpreter,
         args: &[Literal],
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let res = execute_function(
             Rc::clone(&self.function),
             Rc::clone(&self.closure),
@@ -263,7 +267,7 @@ impl Callable for Class {
         self: Rc<Self>,
         interpreter: &mut Interpreter,
         args: &[Literal],
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let instance = Instance::new(Rc::clone(&self));
         if let Some(init) = self.find_method("init") {
             // Not very efficient here, the created instance is copied over to Rc

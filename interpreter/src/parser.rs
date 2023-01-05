@@ -1,5 +1,5 @@
 use crate::ast::{Expr, Stmt};
-use crate::errors::LoskError;
+use crate::error::Error;
 use crate::token::{Literal, Token, Type};
 use std::rc::Rc;
 
@@ -13,10 +13,10 @@ pub struct Parser<'a> {
 pub struct StmtStream(pub(crate) Vec<Stmt>);
 
 // Helper alias for shorter return types
-type ParserResult = Result<StmtStream, Vec<LoskError>>;
-type BlockResult = Result<Vec<Stmt>, LoskError>;
-type StmtResult = Result<Stmt, LoskError>;
-type ExprResult = Result<Expr, LoskError>;
+type ParserResult = Result<StmtStream, Vec<Error>>;
+type BlockResult = Result<Vec<Stmt>, Error>;
+type StmtResult = Result<Stmt, Error>;
+type ExprResult = Result<Expr, Error>;
 
 // Function kind to differentiate between normal functions and class methods during parsing
 #[allow(dead_code)]
@@ -101,7 +101,7 @@ impl<'a> Parser<'a> {
         if !self.check(Type::RightParen) {
             loop {
                 if params.len() > 255 {
-                    return Err(LoskError::parser_error(
+                    return Err(Error::parser_error(
                         self.peek(),
                         "Can't have more than 255 parameters.",
                     ));
@@ -274,7 +274,7 @@ impl<'a> Parser<'a> {
                     name,
                     value,
                 }),
-                _ => Err(LoskError::parser_error(
+                _ => Err(Error::parser_error(
                     &equals,
                     "Invalid assignment target.",
                 )),
@@ -406,7 +406,7 @@ impl<'a> Parser<'a> {
         if !self.check(Type::RightParen) {
             loop {
                 if args.len() >= 255 {
-                    return Err(LoskError::parser_error(
+                    return Err(Error::parser_error(
                         self.peek(),
                         "Can't have more than 255 arguments.",
                     ));
@@ -448,7 +448,7 @@ impl<'a> Parser<'a> {
                 .clone();
             Ok(Expr::super_(token, method))
         } else {
-            Err(LoskError::parser_error(self.peek(), "Expect expression."))
+            Err(Error::parser_error(self.peek(), "Expect expression."))
         }
     }
 
@@ -464,11 +464,11 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, ty: Type, msg: &str) -> Result<&Token, LoskError> {
+    fn consume(&mut self, ty: Type, msg: &str) -> Result<&Token, Error> {
         if self.check(ty) {
             Ok(self.advance())
         } else {
-            Err(LoskError::parser_error(self.peek(), msg))
+            Err(Error::parser_error(self.peek(), msg))
         }
     }
 

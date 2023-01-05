@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
 use crate::callable::{BoxedFunction, CallableType, Class, Function, Instance, Method, Native};
 use crate::env::Environment;
-use crate::errors::LoskError;
+use crate::error::Error;
 use crate::resolver::ResolvedStmts;
 use crate::token::{Literal, Token, TokenIndex, Type};
 
@@ -43,7 +43,7 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, resolved: &ResolvedStmts) -> Result<(), LoskError> {
+    pub fn interpret(&mut self, resolved: &ResolvedStmts) -> Result<(), Error> {
         for stmt in &resolved.0 {
             self.visit_stmt(stmt)?;
         }
@@ -54,7 +54,7 @@ impl Interpreter {
         &mut self,
         stmts: &[Stmt],
         env: Rc<RefCell<Environment>>,
-    ) -> Result<(), LoskError> {
+    ) -> Result<(), Error> {
         let current = self.env.clone();
         self.env = env;
         for stmt in stmts {
@@ -87,7 +87,7 @@ impl ExprVisitor for Interpreter {
         expr: &Expr,
         name: &Token,
         value: &Expr,
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let value = self.visit_expr(value)?;
 
         match self.locals.get(&name.idx) {
@@ -114,14 +114,14 @@ impl ExprVisitor for Interpreter {
         left: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let left = self.visit_expr(left)?;
         let right = self.visit_expr(right)?;
 
         match operator.ty {
             Type::Minus => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left - right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be numbers.",
                 )),
@@ -131,21 +131,21 @@ impl ExprVisitor for Interpreter {
                     Ok(Literal::from(String::from(left.as_str()) + &right))
                 }
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Num(left + right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::Slash => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left / right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be numbers.",
                 )),
             },
             Type::Star => match (left, right) {
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left * right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be numbers.",
                 )),
@@ -153,7 +153,7 @@ impl ExprVisitor for Interpreter {
             Type::Greater => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left > right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left > right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
@@ -161,7 +161,7 @@ impl ExprVisitor for Interpreter {
             Type::GreaterEqual => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left >= right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left >= right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
@@ -169,7 +169,7 @@ impl ExprVisitor for Interpreter {
             Type::Less => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left < right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left < right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
@@ -177,14 +177,14 @@ impl ExprVisitor for Interpreter {
             Type::LessEqual => match (left, right) {
                 (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left <= right)),
                 (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left <= right)),
-                _ => Err(LoskError::runtime_error(
+                _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::EqualEqual => Ok(Literal::Bool(left == right)),
             Type::BangEqual => Ok(Literal::Bool(left != right)),
-            _ => Err(LoskError::runtime_error(operator, "Invalid operator.")),
+            _ => Err(Error::runtime_error(operator, "Invalid operator.")),
         }
     }
 
@@ -194,7 +194,7 @@ impl ExprVisitor for Interpreter {
         callee: &Expr,
         paren: &Token,
         args: &[Expr],
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let callee = self.visit_expr(callee)?;
         let mut evaluated_args = Vec::new();
         for arg in args {
@@ -206,7 +206,7 @@ impl ExprVisitor for Interpreter {
                 if func.arity() == evaluated_args.len() {
                     func.execute(self, &evaluated_args)
                 } else {
-                    Err(LoskError::runtime_error(
+                    Err(Error::runtime_error(
                         paren,
                         &format!(
                             "Expected {} arguments but got {}.",
@@ -216,7 +216,7 @@ impl ExprVisitor for Interpreter {
                     ))
                 }
             }
-            _ => Err(LoskError::runtime_error(
+            _ => Err(Error::runtime_error(
                 paren,
                 "Can only call functions and classes",
             )),
@@ -228,17 +228,17 @@ impl ExprVisitor for Interpreter {
         expr: &Expr,
         object: &Expr,
         name: &Token,
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         if let Literal::Instance(instance) = self.visit_expr(object)? {
             match Instance::get(&instance, &name.lexeme) {
                 Some(val) => Ok(val),
-                None => Err(LoskError::runtime_error(
+                None => Err(Error::runtime_error(
                     name,
                     &format!("Object has no property with name '{}'.", name.lexeme),
                 )),
             }
         } else {
-            Err(LoskError::runtime_error(
+            Err(Error::runtime_error(
                 name,
                 "Only instances have properties.",
             ))
@@ -251,23 +251,23 @@ impl ExprVisitor for Interpreter {
         object: &Expr,
         name: &Token,
         value: &Expr,
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         match self.visit_expr(object)? {
             Literal::Instance(instance) => {
                 let value = self.visit_expr(value)?;
                 Ok(instance.borrow_mut().set(&name.lexeme, value))
             }
-            _ => Err(LoskError::runtime_error(
+            _ => Err(Error::runtime_error(
                 name,
                 "Only instances have fields.",
             )),
         }
     }
 
-    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, LoskError> {
+    fn visit_this(&mut self, expr: &Expr, keyword: &Token) -> Result<Self::Item, Error> {
         match self.lookup_variable(keyword) {
             Some(val) => Ok(val),
-            None => Err(LoskError::runtime_error(
+            None => Err(Error::runtime_error(
                 keyword,
                 "'this' not bound to anything.",
             )),
@@ -279,7 +279,7 @@ impl ExprVisitor for Interpreter {
         expr: &Expr,
         keyword: &Token,
         method: &Token,
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         let dist = self.locals.get(&keyword.idx).unwrap();
         let superclass = self.env.borrow().get_at(*dist, "super").unwrap();
         let this = self.env.borrow().get_at(*dist - 1, "this").unwrap();
@@ -290,7 +290,7 @@ impl ExprVisitor for Interpreter {
                 let fun = match supe.find_method(&method.lexeme) {
                     Some(method) => method,
                     _ => {
-                        return Err(LoskError::runtime_error(
+                        return Err(Error::runtime_error(
                             method,
                             &format!("Unknown method super.{}", method.lexeme),
                         ))
@@ -310,11 +310,11 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, LoskError> {
+    fn visit_grouping(&mut self, expr: &Expr, expression: &Expr) -> Result<Self::Item, Error> {
         self.visit_expr(expression)
     }
 
-    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, LoskError> {
+    fn visit_literal(&mut self, expr: &Expr, value: &Literal) -> Result<Self::Item, Error> {
         Ok(value.clone())
     }
 
@@ -324,11 +324,11 @@ impl ExprVisitor for Interpreter {
         left: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let left = match self.visit_expr(left)? {
             Literal::Bool(val) => val,
             _ => {
-                return Err(LoskError::runtime_error(
+                return Err(Error::runtime_error(
                     operator,
                     "Operand must be boolean expression.",
                 ))
@@ -350,7 +350,7 @@ impl ExprVisitor for Interpreter {
 
         match self.visit_expr(right)? {
             val @ Literal::Bool(_) => Ok(val),
-            _ => Err(LoskError::runtime_error(
+            _ => Err(Error::runtime_error(
                 operator,
                 "Operand must be boolean expression.",
             )),
@@ -362,21 +362,21 @@ impl ExprVisitor for Interpreter {
         expr: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Literal, LoskError> {
+    ) -> Result<Literal, Error> {
         let right = self.visit_expr(right)?;
         match (operator.ty, right) {
             (Type::Minus, Literal::Num(val)) => Ok(Literal::from(-val)),
             (Type::Bang, Literal::Bool(val)) => Ok(Literal::from(!val)),
-            _ => Err(LoskError::runtime_error(
+            _ => Err(Error::runtime_error(
                 operator,
                 "Invalid types for unary operators.",
             )),
         }
     }
 
-    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Literal, LoskError> {
+    fn visit_variable(&mut self, expr: &Expr, name: &Token) -> Result<Literal, Error> {
         match self.lookup_variable(name) {
-            None => Err(LoskError::runtime_error(
+            None => Err(Error::runtime_error(
                 name,
                 &format!("Use of undefined variable '{}'.", name.lexeme),
             )),
@@ -384,7 +384,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_empty(&mut self, _: &Expr) -> Result<Self::Item, LoskError> {
+    fn visit_empty(&mut self, _: &Expr) -> Result<Self::Item, Error> {
         Ok(Literal::Nil)
     }
 }
@@ -392,7 +392,7 @@ impl ExprVisitor for Interpreter {
 impl StmtVisitor for Interpreter {
     type Item = ();
 
-    fn visit_block(&mut self, expr: &Stmt, statements: &[Stmt]) -> Result<(), LoskError> {
+    fn visit_block(&mut self, expr: &Stmt, statements: &[Stmt]) -> Result<(), Error> {
         let env = Rc::new(RefCell::new(Environment::with(self.env.clone())));
         self.execute_block_with_env(statements, env)
     }
@@ -401,7 +401,7 @@ impl StmtVisitor for Interpreter {
         &mut self,
         expr: &Stmt,
         expression: &Expr,
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         self.visit_expr(expression)?;
         Ok(())
     }
@@ -412,7 +412,7 @@ impl StmtVisitor for Interpreter {
         name: &Token,
         params: &[Token],
         body: &[Stmt],
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         let boxed = Rc::new(Function::new(self.env.clone(), name, params, body));
         let callable = Literal::Callable(boxed);
         self.env.borrow_mut().define(&name.lexeme, callable);
@@ -425,7 +425,7 @@ impl StmtVisitor for Interpreter {
         name: &Token,
         superclass: &Expr,
         methods: &[Stmt],
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         self.env.borrow_mut().define(&name.lexeme, Literal::Nil);
         let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(&self.env))));
         let superclass = match self.visit_expr(superclass)? {
@@ -436,7 +436,7 @@ impl StmtVisitor for Interpreter {
                     .define("super", Literal::Callable(Rc::clone(&callable)));
                 callable.as_class()
             }
-            _ => return Err(LoskError::runtime_error(name, "Superclass must be a class")),
+            _ => return Err(Error::runtime_error(name, "Superclass must be a class")),
         };
 
         let mut methods_map = HashMap::new();
@@ -461,7 +461,7 @@ impl StmtVisitor for Interpreter {
             .assign(&name.lexeme, Literal::Callable(class))
             .is_err()
         {
-            Err(LoskError::runtime_error(name, "Undefined variable."))
+            Err(Error::runtime_error(name, "Undefined variable."))
         } else {
             Ok(())
         }
@@ -474,12 +474,12 @@ impl StmtVisitor for Interpreter {
         token: &Token,
         then_branch: &Stmt,
         else_branch: &Stmt,
-    ) -> Result<(), LoskError> {
+    ) -> Result<(), Error> {
         let value = self.visit_expr(expression)?;
         match value {
             Literal::Bool(true) => self.visit_stmt(then_branch),
             Literal::Bool(false) => self.visit_stmt(else_branch),
-            _ => Err(LoskError::runtime_error(
+            _ => Err(Error::runtime_error(
                 token,
                 "If condition must be a boolean expression.",
             )),
@@ -492,14 +492,14 @@ impl StmtVisitor for Interpreter {
         condition: &Expr,
         body: &Stmt,
         token: &Token,
-    ) -> Result<(), LoskError> {
+    ) -> Result<(), Error> {
         loop {
             match self.visit_expr(condition) {
                 Ok(Literal::Bool(true)) => self.visit_stmt(body)?,
                 Ok(Literal::Bool(false)) => return Ok(()),
                 Err(err) => return Err(err),
                 _ => {
-                    return Err(LoskError::runtime_error(
+                    return Err(Error::runtime_error(
                         token,
                         "While condition must be a boolean expression.",
                     ))
@@ -508,7 +508,7 @@ impl StmtVisitor for Interpreter {
         }
     }
 
-    fn visit_print(&mut self, expr: &Stmt, expression: &Expr) -> Result<(), LoskError> {
+    fn visit_print(&mut self, expr: &Stmt, expression: &Expr) -> Result<(), Error> {
         let value = self.visit_expr(expression)?;
         writeln!(self.stdout.borrow_mut(), "{}", value).unwrap();
         Ok(())
@@ -519,12 +519,12 @@ impl StmtVisitor for Interpreter {
         expr: &Stmt,
         keyword: &Token,
         value: &Expr,
-    ) -> Result<Self::Item, LoskError> {
+    ) -> Result<Self::Item, Error> {
         let value = self.visit_expr(value)?;
-        Err(LoskError::return_value(value))
+        Err(Error::return_value(value))
     }
 
-    fn visit_var(&mut self, expr: &Stmt, name: &Token, expression: &Expr) -> Result<(), LoskError> {
+    fn visit_var(&mut self, expr: &Stmt, name: &Token, expression: &Expr) -> Result<(), Error> {
         let value = self.visit_expr(expression)?;
         self.env.borrow_mut().define(&name.lexeme, value);
         Ok(())
@@ -537,7 +537,7 @@ mod tests {
     use std::rc::Rc;
     use std::str;
 
-    use crate::errors::LoskError;
+    use crate::error::Error;
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
     use crate::resolver::Resolver;
@@ -559,7 +559,7 @@ mod tests {
         // Some of the test cases test the resolver error. So if there's an error from resolver,
         // ensure the test messages match and end the program.
         let resolved = match (resolver.resolve(parsed), err) {
-            (Err(LoskError::RuntimeError { msg, .. }), Some(expected)) => {
+            (Err(Error::RuntimeError { msg, .. }), Some(expected)) => {
                 assert_eq!(expected, msg);
                 return;
             }
@@ -571,8 +571,8 @@ mod tests {
 
         let result = interpreter.interpret(&resolved);
         match (result, err) {
-            (Err(LoskError::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
-            (Err(LoskError::RuntimeError { msg, .. }), None) => {
+            (Err(Error::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
+            (Err(Error::RuntimeError { msg, .. }), None) => {
                 panic!("Not expecting any error, found '{}'", msg)
             }
             (Ok(_), Some(err)) => panic!("Expecting an error '{}', found none.", err),
