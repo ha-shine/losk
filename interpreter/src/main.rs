@@ -5,8 +5,7 @@ mod error;
 mod interpreter;
 mod parser;
 mod resolver;
-mod scanner;
-mod token;
+mod value;
 
 fn main() {
     println!("Hello, world!")

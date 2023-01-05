@@ -9,7 +9,8 @@ use crate::callable::{BoxedFunction, CallableType, Class, Function, Instance, Me
 use crate::env::Environment;
 use crate::error::Error;
 use crate::resolver::ResolvedStmts;
-use crate::token::{Literal, Token, TokenIndex, Type};
+use crate::value::Value;
+use core::{Token, TokenIndex, Type};
 
 pub struct Interpreter {
     globals: Rc<RefCell<Environment>>,
@@ -28,12 +29,12 @@ impl Interpreter {
             let start = SystemTime::now();
             let since_epoch = start.duration_since(UNIX_EPOCH).unwrap();
             writeln!(clock_out.borrow_mut(), "{:?}\n", since_epoch).unwrap();
-            Ok(Literal::Nil)
+            Ok(Value::Nil)
         });
         let clock_callable = Native::new(clock, String::from("clock"), 0);
         globals
             .borrow_mut()
-            .define("clock", Literal::Callable(Rc::new(clock_callable)));
+            .define("clock", Value::Callable(Rc::new(clock_callable)));
 
         Interpreter {
             env: globals.clone(),
@@ -71,7 +72,7 @@ impl Interpreter {
         self.locals.insert(token.idx, depth);
     }
 
-    fn lookup_variable(&self, token: &Token) -> Option<Literal> {
+    fn lookup_variable(&self, token: &Token) -> Option<Value> {
         match self.locals.get(&token.idx) {
             None => self.globals.borrow().get(&token.lexeme),
             Some(dist) => self.env.borrow().get_at(*dist, &token.lexeme),
@@ -80,9 +81,9 @@ impl Interpreter {
 }
 
 impl ExprVisitor for Interpreter {
-    type Item = Literal;
+    type Item = Value;
 
-    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Literal, Error> {
+    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Value, Error> {
         let value = self.visit_expr(value)?;
 
         match self.locals.get(&name.idx) {
@@ -108,77 +109,72 @@ impl ExprVisitor for Interpreter {
         left: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Literal, Error> {
+    ) -> Result<Value, Error> {
         let left = self.visit_expr(left)?;
         let right = self.visit_expr(right)?;
 
         match operator.ty {
             Type::Minus => match (left, right) {
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left - right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::from(left - right)),
                 _ => Err(Error::runtime_error(operator, "Operands must be numbers.")),
             },
             Type::Plus => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => {
-                    Ok(Literal::from(String::from(left.as_str()) + &right))
+                (Value::Str(left), Value::Str(right)) => {
+                    Ok(Value::from(String::from(left.as_str()) + &right))
                 }
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Num(left + right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::Num(left + right)),
                 _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::Slash => match (left, right) {
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left / right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::from(left / right)),
                 _ => Err(Error::runtime_error(operator, "Operands must be numbers.")),
             },
             Type::Star => match (left, right) {
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::from(left * right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::from(left * right)),
                 _ => Err(Error::runtime_error(operator, "Operands must be numbers.")),
             },
             Type::Greater => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left > right)),
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left > right)),
+                (Value::Str(left), Value::Str(right)) => Ok(Value::Bool(left > right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::Bool(left > right)),
                 _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::GreaterEqual => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left >= right)),
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left >= right)),
+                (Value::Str(left), Value::Str(right)) => Ok(Value::Bool(left >= right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::Bool(left >= right)),
                 _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::Less => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left < right)),
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left < right)),
+                (Value::Str(left), Value::Str(right)) => Ok(Value::Bool(left < right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::Bool(left < right)),
                 _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
             Type::LessEqual => match (left, right) {
-                (Literal::Str(left), Literal::Str(right)) => Ok(Literal::Bool(left <= right)),
-                (Literal::Num(left), Literal::Num(right)) => Ok(Literal::Bool(left <= right)),
+                (Value::Str(left), Value::Str(right)) => Ok(Value::Bool(left <= right)),
+                (Value::Num(left), Value::Num(right)) => Ok(Value::Bool(left <= right)),
                 _ => Err(Error::runtime_error(
                     operator,
                     "Operands must be either strings or numbers.",
                 )),
             },
-            Type::EqualEqual => Ok(Literal::Bool(left == right)),
-            Type::BangEqual => Ok(Literal::Bool(left != right)),
+            Type::EqualEqual => Ok(Value::Bool(left == right)),
+            Type::BangEqual => Ok(Value::Bool(left != right)),
             _ => Err(Error::runtime_error(operator, "Invalid operator.")),
         }
     }
 
-    fn visit_call(
-        &mut self,
-        callee: &Expr,
-        paren: &Token,
-        args: &[Expr],
-    ) -> Result<Literal, Error> {
+    fn visit_call(&mut self, callee: &Expr, paren: &Token, args: &[Expr]) -> Result<Value, Error> {
         let callee = self.visit_expr(callee)?;
         let mut evaluated_args = Vec::new();
         for arg in args {
@@ -186,7 +182,7 @@ impl ExprVisitor for Interpreter {
         }
 
         match callee {
-            Literal::Callable(func) => {
+            Value::Callable(func) => {
                 if func.arity() == evaluated_args.len() {
                     func.execute(self, &evaluated_args)
                 } else {
@@ -208,7 +204,7 @@ impl ExprVisitor for Interpreter {
     }
 
     fn visit_get(&mut self, object: &Expr, name: &Token) -> Result<Self::Item, Error> {
-        if let Literal::Instance(instance) = self.visit_expr(object)? {
+        if let Value::Instance(instance) = self.visit_expr(object)? {
             match Instance::get(&instance, &name.lexeme) {
                 Some(val) => Ok(val),
                 None => Err(Error::runtime_error(
@@ -231,7 +227,7 @@ impl ExprVisitor for Interpreter {
         value: &Expr,
     ) -> Result<Self::Item, Error> {
         match self.visit_expr(object)? {
-            Literal::Instance(instance) => {
+            Value::Instance(instance) => {
                 let value = self.visit_expr(value)?;
                 Ok(instance.borrow_mut().set(&name.lexeme, value))
             }
@@ -255,7 +251,7 @@ impl ExprVisitor for Interpreter {
         let this = self.env.borrow().get_at(*dist - 1, "this").unwrap();
 
         match (superclass, this) {
-            (Literal::Callable(callable), Literal::Instance(instance)) => {
+            (Value::Callable(callable), Value::Instance(instance)) => {
                 let supe = callable.as_class().unwrap();
                 let fun = match supe.find_method(&method.lexeme) {
                     Some(method) => method,
@@ -267,7 +263,7 @@ impl ExprVisitor for Interpreter {
                     }
                 };
 
-                Ok(Literal::Callable(Rc::new(Method::bind(
+                Ok(Value::Callable(Rc::new(Method::bind(
                     fun,
                     instance,
                     method.lexeme == "init",
@@ -284,7 +280,7 @@ impl ExprVisitor for Interpreter {
         self.visit_expr(expression)
     }
 
-    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, Error> {
+    fn visit_literal(&mut self, value: &Value) -> Result<Self::Item, Error> {
         Ok(value.clone())
     }
 
@@ -293,9 +289,9 @@ impl ExprVisitor for Interpreter {
         left: &Expr,
         operator: &Token,
         right: &Expr,
-    ) -> Result<Literal, Error> {
+    ) -> Result<Value, Error> {
         let left = match self.visit_expr(left)? {
-            Literal::Bool(val) => val,
+            Value::Bool(val) => val,
             _ => {
                 return Err(Error::runtime_error(
                     operator,
@@ -311,14 +307,14 @@ impl ExprVisitor for Interpreter {
         // Otherwise, the value is already known and it can be returned immediately.
         if operator.ty == Type::Or {
             if left {
-                return Ok(Literal::from(true));
+                return Ok(Value::from(true));
             }
         } else if !left {
-            return Ok(Literal::from(false));
+            return Ok(Value::from(false));
         }
 
         match self.visit_expr(right)? {
-            val @ Literal::Bool(_) => Ok(val),
+            val @ Value::Bool(_) => Ok(val),
             _ => Err(Error::runtime_error(
                 operator,
                 "Operand must be boolean expression.",
@@ -326,11 +322,11 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Literal, Error> {
+    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Value, Error> {
         let right = self.visit_expr(right)?;
         match (operator.ty, right) {
-            (Type::Minus, Literal::Num(val)) => Ok(Literal::from(-val)),
-            (Type::Bang, Literal::Bool(val)) => Ok(Literal::from(!val)),
+            (Type::Minus, Value::Num(val)) => Ok(Value::from(-val)),
+            (Type::Bang, Value::Bool(val)) => Ok(Value::from(!val)),
             _ => Err(Error::runtime_error(
                 operator,
                 "Invalid types for unary operators.",
@@ -338,7 +334,7 @@ impl ExprVisitor for Interpreter {
         }
     }
 
-    fn visit_variable(&mut self, name: &Token) -> Result<Literal, Error> {
+    fn visit_variable(&mut self, name: &Token) -> Result<Value, Error> {
         match self.lookup_variable(name) {
             None => Err(Error::runtime_error(
                 name,
@@ -349,7 +345,7 @@ impl ExprVisitor for Interpreter {
     }
 
     fn visit_empty(&mut self) -> Result<Self::Item, Error> {
-        Ok(Literal::Nil)
+        Ok(Value::Nil)
     }
 }
 
@@ -373,7 +369,7 @@ impl StmtVisitor for Interpreter {
         body: &[Stmt],
     ) -> Result<Self::Item, Error> {
         let boxed = Rc::new(Function::new(self.env.clone(), name, params, body));
-        let callable = Literal::Callable(boxed);
+        let callable = Value::Callable(boxed);
         self.env.borrow_mut().define(&name.lexeme, callable);
         Ok(())
     }
@@ -384,14 +380,14 @@ impl StmtVisitor for Interpreter {
         superclass: &Expr,
         methods: &[Stmt],
     ) -> Result<Self::Item, Error> {
-        self.env.borrow_mut().define(&name.lexeme, Literal::Nil);
+        self.env.borrow_mut().define(&name.lexeme, Value::Nil);
         let closure = Rc::new(RefCell::new(Environment::with(Rc::clone(&self.env))));
         let superclass = match self.visit_expr(superclass)? {
-            Literal::Nil => None,
-            Literal::Callable(callable) if callable.ty() == CallableType::Class => {
+            Value::Nil => None,
+            Value::Callable(callable) if callable.ty() == CallableType::Class => {
                 closure
                     .borrow_mut()
-                    .define("super", Literal::Callable(Rc::clone(&callable)));
+                    .define("super", Value::Callable(Rc::clone(&callable)));
                 callable.as_class()
             }
             _ => return Err(Error::runtime_error(name, "Superclass must be a class")),
@@ -416,7 +412,7 @@ impl StmtVisitor for Interpreter {
         if self
             .env
             .borrow_mut()
-            .assign(&name.lexeme, Literal::Callable(class))
+            .assign(&name.lexeme, Value::Callable(class))
             .is_err()
         {
             Err(Error::runtime_error(name, "Undefined variable."))
@@ -434,8 +430,8 @@ impl StmtVisitor for Interpreter {
     ) -> Result<(), Error> {
         let value = self.visit_expr(expression)?;
         match value {
-            Literal::Bool(true) => self.visit_stmt(then_branch),
-            Literal::Bool(false) => self.visit_stmt(else_branch),
+            Value::Bool(true) => self.visit_stmt(then_branch),
+            Value::Bool(false) => self.visit_stmt(else_branch),
             _ => Err(Error::runtime_error(
                 token,
                 "If condition must be a boolean expression.",
@@ -446,8 +442,8 @@ impl StmtVisitor for Interpreter {
     fn visit_while(&mut self, condition: &Expr, body: &Stmt, token: &Token) -> Result<(), Error> {
         loop {
             match self.visit_expr(condition) {
-                Ok(Literal::Bool(true)) => self.visit_stmt(body)?,
-                Ok(Literal::Bool(false)) => return Ok(()),
+                Ok(Value::Bool(true)) => self.visit_stmt(body)?,
+                Ok(Value::Bool(false)) => return Ok(()),
                 Err(err) => return Err(err),
                 _ => {
                     return Err(Error::runtime_error(
@@ -487,7 +483,7 @@ mod tests {
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
     use crate::resolver::Resolver;
-    use crate::scanner::Scanner;
+    use core::Scanner;
 
     fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
         println!("Testing source:\n{}", src);

@@ -3,9 +3,7 @@ use phf::{phf_map, Map};
 use crate::error::Error;
 use crate::token::{Literal, Token, Type};
 
-pub struct Scanner {
-    command_index: usize,
-}
+pub struct Scanner;
 
 impl Scanner {
     const KEYWORDS: Map<&'static str, Type> = phf_map! {
@@ -28,15 +26,14 @@ impl Scanner {
     };
 
     pub fn new() -> Self {
-        Scanner { command_index: 0 }
+        Scanner
     }
 
     pub fn scan_tokens<'a, 'b>(&'a mut self, src: &'b str) -> TokenStream
     where
         'b: 'a,
     {
-        let stream = TokenStream::new(src, self.command_index);
-        self.command_index += 1;
+        let stream = TokenStream::new(src);
         stream
     }
 }
@@ -44,24 +41,30 @@ impl Scanner {
 pub struct TokenStream<'a> {
     src: &'a str,
     line: usize,
-    current: usize,
+
+    // `start` and `current` points to the start and end of the token being scanned
     start: usize,
-    index: usize, // token index
+    current: usize,
+
+    // This represents a token's index in the token stream
+    index: usize,
+
+    // This flag is set to `true` if the eof is reached and the eof token has been emitted.
+    // This is required because the iterator needs to distinguish between when eof is reached but
+    // the token is not emitted, and eof is reached and token has been emitted.
     eof: bool,
-    command_index: usize,
     error: Option<Error>,
 }
 
 impl<'a> TokenStream<'a> {
-    pub fn new(src: &'a str, command_index: usize) -> Self {
+    pub fn new(src: &'a str) -> Self {
         TokenStream {
             src,
             line: 0,
-            current: 0,
             start: 0,
+            current: 0,
             index: 0,
             eof: false,
-            command_index,
             error: None,
         }
     }
@@ -142,7 +145,7 @@ impl<'a> TokenStream<'a> {
                     if done {
                         None
                     } else {
-                        return Err(self.scanner_error("Unterminated block comment."));
+                        return Err(Error::UnterminatedBlockComment { line: self.line });
                     }
                 } else {
                     Some(self.make_token(Type::Slash))
@@ -166,7 +169,10 @@ impl<'a> TokenStream<'a> {
                 } else if c.is_alphabetic() {
                     Some(self.identifier()?)
                 } else {
-                    return Err(self.scanner_error("Unexpected character."));
+                    return Err(Error::UnexpectedCharacter {
+                        ch: c,
+                        line: self.line,
+                    });
                 }
             }
         };
@@ -184,7 +190,7 @@ impl<'a> TokenStream<'a> {
         }
 
         if self.is_at_end() {
-            return Err(self.scanner_error("Unterminated string."));
+            return Err(Error::UnterminatedString { line: self.line });
         }
 
         // consume the closing "
@@ -270,13 +276,6 @@ impl<'a> TokenStream<'a> {
         }
     }
 
-    fn scanner_error(&self, msg: &str) -> Error {
-        Error::ScannerError {
-            line: self.line,
-            msg: String::from(msg),
-        }
-    }
-
     fn is_at_end(&self) -> bool {
         self.current >= self.src.len()
     }
@@ -327,7 +326,6 @@ impl<'a> Iterator for TokenStream<'a> {
 #[cfg(test)]
 mod tests {
     use crate::error::Error;
-    use crate::scanner::Error::ScannerError;
     use crate::scanner::Scanner;
     use crate::token::{Literal, Token, Type};
 
@@ -422,10 +420,7 @@ mod tests {
 
         assert_eq!(
             stream.error().unwrap(),
-            &ScannerError {
-                line: 0,
-                msg: String::from("Unterminated block comment.")
-            }
+            &Error::UnterminatedBlockComment { line: 0 }
         );
     }
 
@@ -438,10 +433,7 @@ mod tests {
 
         assert_eq!(
             stream.error().unwrap(),
-            &ScannerError {
-                line: 0,
-                msg: String::from("Unterminated string.")
-            }
+            &Error::UnterminatedString { line: 0 }
         );
     }
 }

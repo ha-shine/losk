@@ -1,9 +1,13 @@
+use core::Error as CoreError;
 use std::borrow::Cow;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
 #[allow(clippy::enum_variant_names)]
 pub(crate) enum Error {
+    #[error("[line {line}] scanner error: {}", .source)]
+    ScannerError { line: usize, source: CoreError },
+
     #[error("[line {line:?}] compile error: {msg:?}")]
     CompileError { line: usize, msg: Cow<'static, str> },
 

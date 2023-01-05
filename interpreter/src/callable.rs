@@ -2,7 +2,8 @@ use crate::ast::Stmt;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::interpreter::Interpreter;
-use crate::token::{Literal, Token};
+use crate::value::Value;
+use core::Token;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
@@ -24,8 +25,8 @@ pub(crate) trait Callable {
     fn execute(
         self: Rc<Self>,
         interpreter: &mut Interpreter,
-        args: &[Literal],
-    ) -> Result<Literal, Error>;
+        args: &[Value],
+    ) -> Result<Value, Error>;
 
     // This is a bit hacky
     fn as_class(self: Rc<Self>) -> Option<Rc<Class>>;
@@ -37,7 +38,7 @@ impl Debug for dyn Callable {
     }
 }
 
-pub(crate) type BoxedFunction = Box<dyn Fn(&[Literal]) -> Result<Literal, Error>>;
+pub(crate) type BoxedFunction = Box<dyn Fn(&[Value]) -> Result<Value, Error>>;
 
 // `NativeCallable` bridges the native rust calls and the Losk interpreter environment.
 // This implements callable and all of these trait objects will live in the global namespace.
@@ -62,11 +63,7 @@ impl Callable for Native {
         self.arity
     }
 
-    fn execute(
-        self: Rc<Self>,
-        _: &mut Interpreter,
-        args: &[Literal],
-    ) -> Result<Literal, Error> {
+    fn execute(self: Rc<Self>, _: &mut Interpreter, args: &[Value]) -> Result<Value, Error> {
         (self.func)(args)
     }
 
@@ -108,15 +105,15 @@ fn execute_function(
     function: Rc<Function>,
     closure: Rc<RefCell<Environment>>,
     interpreter: &mut Interpreter,
-    args: &[Literal],
-) -> Result<Literal, Error> {
+    args: &[Value],
+) -> Result<Value, Error> {
     let mut env = Environment::with(closure);
     for (param, arg) in function.params.iter().zip(args) {
         env.define(&param.lexeme, arg.clone());
     }
 
     match interpreter.execute_block_with_env(&function.body, Rc::new(RefCell::new(env))) {
-        Ok(()) => Ok(Literal::Nil),
+        Ok(()) => Ok(Value::Nil),
         Err(Error::Return(value)) => Ok(value.value),
         Err(err) => Err(err),
     }
@@ -138,8 +135,8 @@ impl Callable for Function {
     fn execute(
         self: Rc<Self>,
         interpreter: &mut Interpreter,
-        args: &[Literal],
-    ) -> Result<Literal, Error> {
+        args: &[Value],
+    ) -> Result<Value, Error> {
         let closure = Rc::clone(&self.closure);
         execute_function(self, closure, interpreter, args)
     }
@@ -174,7 +171,7 @@ impl Method {
         ))));
         closure
             .borrow_mut()
-            .define("this", Literal::Instance(instance));
+            .define("this", Value::Instance(instance));
 
         Method {
             closure,
@@ -196,8 +193,8 @@ impl Callable for Method {
     fn execute(
         self: Rc<Self>,
         interpreter: &mut Interpreter,
-        args: &[Literal],
-    ) -> Result<Literal, Error> {
+        args: &[Value],
+    ) -> Result<Value, Error> {
         let res = execute_function(
             Rc::clone(&self.function),
             Rc::clone(&self.closure),
@@ -266,15 +263,15 @@ impl Callable for Class {
     fn execute(
         self: Rc<Self>,
         interpreter: &mut Interpreter,
-        args: &[Literal],
-    ) -> Result<Literal, Error> {
+        args: &[Value],
+    ) -> Result<Value, Error> {
         let instance = Instance::new(Rc::clone(&self));
         if let Some(init) = self.find_method("init") {
             // Not very efficient here, the created instance is copied over to Rc
             Rc::new(Method::bind(init, Rc::clone(&instance), true)).execute(interpreter, args)?;
         }
 
-        Ok(Literal::Instance(instance))
+        Ok(Value::Instance(instance))
     }
 
     fn as_class(self: Rc<Self>) -> Option<Rc<Class>> {
@@ -285,7 +282,7 @@ impl Callable for Class {
 #[derive(Debug, Clone)]
 pub(crate) struct Instance {
     class: Rc<Class>,
-    fields: HashMap<String, Literal>,
+    fields: HashMap<String, Value>,
 }
 
 impl Instance {
@@ -296,12 +293,12 @@ impl Instance {
         }))
     }
 
-    pub(crate) fn get(instance: &Rc<RefCell<Self>>, name: &str) -> Option<Literal> {
+    pub(crate) fn get(instance: &Rc<RefCell<Self>>, name: &str) -> Option<Value> {
         if let Some(field) = instance.borrow().fields.get(name) {
             Some(field.clone())
         } else {
             instance.borrow().class.find_method(name).map(|function| {
-                Literal::Callable(Rc::new(Method::bind(
+                Value::Callable(Rc::new(Method::bind(
                     function,
                     Rc::clone(instance),
                     name == "init",
@@ -310,7 +307,7 @@ impl Instance {
         }
     }
 
-    pub(crate) fn set(&mut self, name: &str, value: Literal) -> Literal {
+    pub(crate) fn set(&mut self, name: &str, value: Value) -> Value {
         self.fields.insert(String::from(name), value.clone());
         value
     }

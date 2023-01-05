@@ -1,11 +1,13 @@
-use crate::token::{Literal, Token};
+use crate::value::Value;
+use core::Error as CoreError;
+use core::Token;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
 #[allow(clippy::enum_variant_names)]
 pub enum Error {
-    #[error("[line {line:?}] scanner error: {msg:?}")]
-    ScannerError { line: usize, msg: String },
+    #[error("[line {line}] scanner error: {}", .source)]
+    ScannerError { line: usize, source: CoreError },
 
     #[error("[line {line:?}] parser error: {msg:?}")]
     ParserError {
@@ -26,7 +28,7 @@ pub enum Error {
 
 #[derive(Debug, PartialEq)]
 pub struct ReturnValue {
-    pub(crate) value: Literal,
+    pub(crate) value: Value,
 }
 
 impl Error {
@@ -45,7 +47,7 @@ impl Error {
         }
     }
 
-    pub(crate) fn return_value(value: Literal) -> Self {
+    pub(crate) fn return_value(value: Value) -> Self {
         Error::Return(ReturnValue { value })
     }
 }

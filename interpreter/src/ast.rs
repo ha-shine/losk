@@ -1,5 +1,6 @@
 use crate::error::Error;
-use crate::token::{Literal, Token};
+use crate::value::Value;
+use core::Token;
 use std::rc::Rc;
 
 // Currently tokens are cloned in every creation (stmt or expr) because they are not that
@@ -7,7 +8,7 @@ use std::rc::Rc;
 // I can try to use references instead of cloning if it starts showing inefficiency.
 
 #[allow(dead_code)]
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum Expr {
     Assign {
         name: Token,
@@ -39,7 +40,7 @@ pub(crate) enum Expr {
         expression: Box<Expr>,
     },
     Literal {
-        value: Literal,
+        value: Value,
     },
     Logical {
         left: Box<Expr>,
@@ -96,11 +97,7 @@ pub(crate) trait ExprVisitor {
             Expr::Empty => self.visit_empty(),
         }
     }
-    fn visit_assign(
-        &mut self,
-        name: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error>;
+    fn visit_assign(&mut self, name: &Token, value: &Expr) -> Result<Self::Item, Error>;
     fn visit_binary(
         &mut self,
         left: &Expr,
@@ -113,36 +110,20 @@ pub(crate) trait ExprVisitor {
         paren: &Token,
         args: &[Expr],
     ) -> Result<Self::Item, Error>;
-    fn visit_get(
-        &mut self,
-        object: &Expr,
-        name: &Token,
-    ) -> Result<Self::Item, Error>;
-    fn visit_set(
-        &mut self,
-        object: &Expr,
-        name: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error>;
+    fn visit_get(&mut self, object: &Expr, name: &Token) -> Result<Self::Item, Error>;
+    fn visit_set(&mut self, object: &Expr, name: &Token, value: &Expr)
+        -> Result<Self::Item, Error>;
     fn visit_this(&mut self, keyword: &Token) -> Result<Self::Item, Error>;
-    fn visit_super(
-        &mut self,
-        keyword: &Token,
-        method: &Token,
-    ) -> Result<Self::Item, Error>;
+    fn visit_super(&mut self, keyword: &Token, method: &Token) -> Result<Self::Item, Error>;
     fn visit_grouping(&mut self, expression: &Expr) -> Result<Self::Item, Error>;
-    fn visit_literal(&mut self, value: &Literal) -> Result<Self::Item, Error>;
+    fn visit_literal(&mut self, value: &Value) -> Result<Self::Item, Error>;
     fn visit_logical(
         &mut self,
         left: &Expr,
         operator: &Token,
         right: &Expr,
     ) -> Result<Self::Item, Error>;
-    fn visit_unary(
-        &mut self,
-        operator: &Token,
-        right: &Expr,
-    ) -> Result<Self::Item, Error>;
+    fn visit_unary(&mut self, operator: &Token, right: &Expr) -> Result<Self::Item, Error>;
     fn visit_variable(&mut self, name: &Token) -> Result<Self::Item, Error>;
     fn visit_empty(&mut self) -> Result<Self::Item, Error>;
 }
@@ -193,10 +174,10 @@ impl Expr {
 
     pub(crate) fn literal<T>(value: T) -> Self
     where
-        Literal: From<T>,
+        Value: From<T>,
     {
         Expr::Literal {
-            value: Literal::from(value),
+            value: Value::from(value),
         }
     }
 
@@ -301,8 +282,7 @@ pub(crate) trait StmtVisitor {
     }
 
     fn visit_block(&mut self, statements: &[Stmt]) -> Result<Self::Item, Error>;
-    fn visit_expression(&mut self, expression: &Expr)
-        -> Result<Self::Item, Error>;
+    fn visit_expression(&mut self, expression: &Expr) -> Result<Self::Item, Error>;
     fn visit_function(
         &mut self,
         name: &Token,
@@ -329,16 +309,8 @@ pub(crate) trait StmtVisitor {
         token: &Token,
     ) -> Result<Self::Item, Error>;
     fn visit_print(&mut self, expression: &Expr) -> Result<Self::Item, Error>;
-    fn visit_return(
-        &mut self,
-        keyword: &Token,
-        value: &Expr,
-    ) -> Result<Self::Item, Error>;
-    fn visit_var(
-        &mut self,
-        name: &Token,
-        init: &Expr,
-    ) -> Result<Self::Item, Error>;
+    fn visit_return(&mut self, keyword: &Token, value: &Expr) -> Result<Self::Item, Error>;
+    fn visit_var(&mut self, name: &Token, init: &Expr) -> Result<Self::Item, Error>;
 }
 
 impl Stmt {

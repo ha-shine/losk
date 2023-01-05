@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 thiserror = "1.0.38"
 phf = { version = "0.11.1", features = ["macros"] }
+core = { path = "../core" }

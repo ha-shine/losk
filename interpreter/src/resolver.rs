@@ -2,7 +2,8 @@ use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
 use crate::error::Error;
 use crate::interpreter::Interpreter;
 use crate::parser::StmtStream;
-use crate::token::{Literal, Token};
+use crate::value::Value;
+use core::Token;
 use std::collections::HashMap;
 
 enum State {
@@ -319,7 +320,7 @@ impl<'a> ExprVisitor for Resolver<'a> {
         self.visit_expr(expression)
     }
 
-    fn visit_literal(&mut self, _value: &Literal) -> Result<Self::Item, Error> {
+    fn visit_literal(&mut self, _value: &Value) -> Result<Self::Item, Error> {
         Ok(())
     }
 

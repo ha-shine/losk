@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Stmt};
 use crate::error::Error;
-use crate::token::{Token, Type};
+use core::{Token, Type};
 use std::rc::Rc;
 
 pub struct Parser<'a> {
@@ -514,8 +514,8 @@ impl<'a> Parser<'a> {
 mod tests {
     use crate::ast::{Expr, Stmt};
     use crate::parser::{Parser, StmtStream};
-    use crate::scanner::Scanner;
-    use crate::token::{Literal, Token, Type};
+    use core::Scanner;
+    use core::{Literal, Token, Type};
 
     macro_rules! token {
         ($ty:ident, $lex:literal, $col:literal, $idx:literal) => {
