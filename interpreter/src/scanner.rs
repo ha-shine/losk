@@ -3,15 +3,11 @@ use phf::{phf_map, Map};
 use crate::error::Error;
 use crate::token::{Literal, Token, Type};
 
-pub struct Scanner<'a> {
-    start: usize,
-    current: usize,
-    line: usize,
-    tkn_idx: usize,
-    src: &'a str,
+pub struct Scanner {
+    command_index: usize,
 }
 
-impl<'a> Scanner<'a> {
+impl Scanner {
     const KEYWORDS: Map<&'static str, Type> = phf_map! {
         "and" => Type::And,
         "else" => Type::Else,
@@ -31,71 +27,93 @@ impl<'a> Scanner<'a> {
         "while" => Type::While,
     };
 
-    pub fn new(src: &'a str) -> Self {
-        Scanner {
-            start: 0,
-            current: 0,
-            line: 0,
-            tkn_idx: 0,
+    pub fn new() -> Self {
+        Scanner { command_index: 0 }
+    }
+
+    pub fn scan_tokens<'a, 'b>(&'a mut self, src: &'b str) -> TokenStream
+    where
+        'b: 'a,
+    {
+        let stream = TokenStream::new(src, self.command_index);
+        self.command_index += 1;
+        stream
+    }
+}
+
+pub struct TokenStream<'a> {
+    src: &'a str,
+    line: usize,
+    current: usize,
+    start: usize,
+    index: usize, // token index
+    eof: bool,
+    command_index: usize,
+    error: Option<Error>,
+}
+
+impl<'a> TokenStream<'a> {
+    pub fn new(src: &'a str, command_index: usize) -> Self {
+        TokenStream {
             src,
+            line: 0,
+            current: 0,
+            start: 0,
+            index: 0,
+            eof: false,
+            command_index,
+            error: None,
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, Error> {
-        let mut tokens = vec![];
-        while !self.is_at_end() {
-            self.start = self.current;
-            self.scan_token(&mut tokens)?;
-        }
-
-        tokens.push(self.make_token(Type::Eof));
-        Ok(tokens)
+    pub fn error(&self) -> Option<&Error> {
+        self.error.as_ref()
     }
 
-    fn scan_token(&mut self, tokens: &mut Vec<Token>) -> Result<(), Error> {
+    fn scan_token(&mut self) -> Result<Option<Token>, Error> {
         let c = self.advance();
 
-        match c {
-            '(' => tokens.push(self.make_token(Type::LeftParen)),
-            ')' => tokens.push(self.make_token(Type::RightParen)),
-            '{' => tokens.push(self.make_token(Type::LeftBrace)),
-            '}' => tokens.push(self.make_token(Type::RightBrace)),
-            ',' => tokens.push(self.make_token(Type::Comma)),
-            '.' => tokens.push(self.make_token(Type::Dot)),
-            '-' => tokens.push(self.make_token(Type::Minus)),
-            '+' => tokens.push(self.make_token(Type::Plus)),
-            ';' => tokens.push(self.make_token(Type::SemiColon)),
-            '*' => tokens.push(self.make_token(Type::Star)),
+        let token = match c {
+            '(' => Some(self.make_token(Type::LeftParen)),
+            ')' => Some(self.make_token(Type::RightParen)),
+            '{' => Some(self.make_token(Type::LeftBrace)),
+            '}' => Some(self.make_token(Type::RightBrace)),
+            ',' => Some(self.make_token(Type::Comma)),
+            '.' => Some(self.make_token(Type::Dot)),
+            '-' => Some(self.make_token(Type::Minus)),
+            '+' => Some(self.make_token(Type::Plus)),
+            ';' => Some(self.make_token(Type::SemiColon)),
+            '*' => Some(self.make_token(Type::Star)),
 
             '!' => {
                 if self.match_char('=') {
-                    tokens.push(self.make_token(Type::BangEqual))
+                    Some(self.make_token(Type::BangEqual))
                 } else {
-                    tokens.push(self.make_token(Type::Bang))
+                    Some(self.make_token(Type::Bang))
                 }
             }
 
             '=' => {
                 if self.match_char('=') {
-                    tokens.push(self.make_token(Type::EqualEqual))
+                    Some(self.make_token(Type::EqualEqual))
                 } else {
-                    tokens.push(self.make_token(Type::Equal))
+                    Some(self.make_token(Type::Equal))
                 }
             }
 
             '<' => {
                 if self.match_char('=') {
-                    tokens.push(self.make_token(Type::LessEqual))
+                    Some(self.make_token(Type::LessEqual))
                 } else {
-                    tokens.push(self.make_token(Type::Less))
+                    Some(self.make_token(Type::Less))
                 }
             }
 
             '>' => {
                 if self.match_char('=') {
-                    tokens.push(self.make_token(Type::GreaterEqual))
+                    Some(self.make_token(Type::GreaterEqual))
                 } else {
-                    tokens.push(self.make_token(Type::Greater))
+                    Some(self.make_token(Type::Greater))
                 }
             }
 
@@ -104,6 +122,7 @@ impl<'a> Scanner<'a> {
                     while self.peek() != '\n' && !self.is_at_end() {
                         self.advance();
                     }
+                    None
                 } else if self.match_char('*') {
                     let mut done = false;
                     while !self.is_at_end() && !done {
@@ -121,35 +140,38 @@ impl<'a> Scanner<'a> {
                     }
 
                     if done {
-                        return Ok(());
+                        None
+                    } else {
+                        return Err(self.scanner_error("Unterminated block comment."));
                     }
-
-                    return Err(self.error("Unterminated block comment."));
                 } else {
-                    tokens.push(self.make_token(Type::Slash));
+                    Some(self.make_token(Type::Slash))
                 }
             }
 
-            '"' => tokens.push(self.string()?),
+            '"' => Some(self.string()?),
 
             // White spaces, do nothing
-            ' ' | '\t' | '\r' => {}
+            ' ' | '\t' | '\r' => None,
 
             // Increment for new line
-            '\n' => self.line += 1,
+            '\n' => {
+                self.line += 1;
+                None
+            }
 
             _ => {
                 if c.is_ascii_digit() {
-                    tokens.push(self.number()?)
+                    Some(self.number()?)
                 } else if c.is_alphabetic() {
-                    tokens.push(self.identifier()?)
+                    Some(self.identifier()?)
                 } else {
-                    return Err(self.error("Unexpected character."));
+                    return Err(self.scanner_error("Unexpected character."));
                 }
             }
-        }
+        };
 
-        Ok(())
+        Ok(token)
     }
 
     fn string(&mut self) -> Result<Token, Error> {
@@ -162,7 +184,7 @@ impl<'a> Scanner<'a> {
         }
 
         if self.is_at_end() {
-            return Err(self.error("Unterminated string."));
+            return Err(self.scanner_error("Unterminated string."));
         }
 
         // consume the closing "
@@ -199,7 +221,7 @@ impl<'a> Scanner<'a> {
 
         let text = String::from(&self.src[self.start..self.current]);
 
-        match Self::KEYWORDS.get(&text) {
+        match Scanner::KEYWORDS.get(&text) {
             None => Ok(self.make_token(Type::Identifier)),
             Some(ty @ Type::True) | Some(ty @ Type::False) => {
                 let val = match ty {
@@ -211,21 +233,6 @@ impl<'a> Scanner<'a> {
             }
             Some(keyword) => Ok(self.make_token(*keyword)),
         }
-    }
-
-    fn make_token(&mut self, ty: Type) -> Token {
-        self.make_token_with_val(ty, Literal::Nil)
-    }
-
-    fn make_token_with_val(&mut self, ty: Type, val: Literal) -> Token {
-        let lexeme = match ty {
-            Type::Eof => String::new(),
-            _ => String::from(&self.src[self.start..self.current]),
-        };
-
-        let token = Token::new(ty, lexeme, self.line, self.start, self.tkn_idx, val);
-        self.tkn_idx += 1;
-        token
     }
 
     fn current(&self) -> char {
@@ -248,10 +255,6 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn is_at_end(&self) -> bool {
-        self.current >= self.src.len()
-    }
-
     fn advance(&mut self) -> char {
         let res = self.current();
         self.current += 1;
@@ -267,16 +270,65 @@ impl<'a> Scanner<'a> {
         }
     }
 
-    fn error(&self, msg: &str) -> Error {
+    fn scanner_error(&self, msg: &str) -> Error {
         Error::ScannerError {
             line: self.line,
             msg: String::from(msg),
         }
     }
+
+    fn is_at_end(&self) -> bool {
+        self.current >= self.src.len()
+    }
+
+    fn make_token(&mut self, ty: Type) -> Token {
+        self.make_token_with_val(ty, Literal::Nil)
+    }
+
+    fn make_token_with_val(&mut self, ty: Type, val: Literal) -> Token {
+        let lexeme = match ty {
+            Type::Eof => String::new(),
+            _ => String::from(&self.src[self.start..self.current]),
+        };
+
+        let token = Token::new(ty, lexeme, self.line, self.start, self.index, val);
+        self.index += 1;
+        token
+    }
+}
+
+impl<'a> Iterator for TokenStream<'a> {
+    type Item = Result<Token, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.error.is_some() {
+            return self.error.as_ref().map(|err| Err(err.clone()));
+        } else if self.eof {
+            return None;
+        }
+
+        while !self.is_at_end() {
+            self.start = self.current;
+
+            let token = self.scan_token();
+            match token {
+                Ok(None) => continue,
+                Ok(Some(token)) => return Some(Ok(token)),
+                Err(err) => {
+                    self.error = Some(err.clone());
+                    return Some(Err(err));
+                }
+            }
+        }
+
+        self.eof = true;
+        Some(Ok(self.make_token(Type::Eof)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::error::Error;
     use crate::scanner::Error::ScannerError;
     use crate::scanner::Scanner;
     use crate::token::{Literal, Token, Type};
@@ -284,11 +336,14 @@ mod tests {
     #[test]
     fn test_basic_scanning() {
         let source = "class fun {} var foo bar 12.45 \"hello\" true false nil // this is a comment";
-        let mut scanner = Scanner::new(source);
-        let tokens = scanner.scan_tokens().unwrap();
+        let mut scanner = Scanner::new();
+        let stream = scanner.scan_tokens(source);
 
         assert_eq!(
-            tokens,
+            stream
+                .take_while(Result::is_ok)
+                .map(Result::unwrap)
+                .collect::<Vec<Token>>(),
             vec![
                 Token::new(Type::Class, String::from("class"), 0, 0, 0, Literal::Nil),
                 Token::new(Type::Fun, String::from("fun"), 0, 6, 1, Literal::Nil),
@@ -354,11 +409,14 @@ mod tests {
         let source = "/*\n\
             this is a multiline comment \n\
         */";
-        let mut scanner = Scanner::new(source);
-        let tokens = scanner.scan_tokens().unwrap();
+        let mut scanner = Scanner::new();
+        let mut stream = scanner.scan_tokens(source);
 
         assert_eq!(
-            tokens,
+            stream
+                .take_while(Result::is_ok)
+                .map(Result::unwrap)
+                .collect::<Vec<Token>>(),
             vec![Token::new(Type::Eof, String::new(), 2, 0, 0, Literal::Nil)]
         );
     }
@@ -366,26 +424,40 @@ mod tests {
     #[test]
     fn test_unterminated_multiline_comment() {
         let source = "/*";
-        let mut scanner = Scanner::new(source);
+        let mut scanner = Scanner::new();
+        let stream = scanner.scan_tokens(source);
+        let errs: Vec<Error> = stream
+            .skip_while(Result::is_ok)
+            .take(1)
+            .map(Result::unwrap_err)
+            .collect();
+
         assert_eq!(
-            scanner.scan_tokens(),
-            Err(ScannerError {
+            &errs[0],
+            &ScannerError {
                 line: 0,
                 msg: String::from("Unterminated block comment.")
-            })
+            }
         );
     }
 
     #[test]
     fn test_unterminated_string() {
         let source = "\"hello";
-        let mut scanner = Scanner::new(source);
+        let mut scanner = Scanner::new();
+        let stream = scanner.scan_tokens(source);
+        let errs: Vec<Error> = stream
+            .skip_while(Result::is_ok)
+            .take(1)
+            .map(Result::unwrap_err)
+            .collect();
+
         assert_eq!(
-            scanner.scan_tokens(),
-            Err(ScannerError {
+            &errs[0],
+            &ScannerError {
                 line: 0,
                 msg: String::from("Unterminated string.")
-            })
+            }
         );
     }
 }

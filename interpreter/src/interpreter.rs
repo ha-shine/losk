@@ -492,8 +492,12 @@ mod tests {
     fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
         println!("Testing source:\n{}", src);
 
-        let mut scanner = Scanner::new(src);
-        let tokens = scanner.scan_tokens().unwrap();
+        let mut scanner = Scanner::new();
+        let tokens = scanner
+            .scan_tokens(src)
+            .take_while(Result::is_ok)
+            .map(Result::unwrap)
+            .collect();
 
         let mut parser = Parser::new(&tokens);
         let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));

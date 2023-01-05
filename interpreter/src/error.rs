@@ -1,7 +1,7 @@
 use crate::token::{Literal, Token};
 use thiserror::Error;
 
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error, PartialEq, Clone)]
 #[allow(clippy::enum_variant_names)]
 pub enum Error {
     #[error("[line {line:?}] scanner error: {msg:?}")]
@@ -24,7 +24,7 @@ pub enum Error {
     Return(ReturnValue),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct ReturnValue {
     pub(crate) value: Literal,
 }
