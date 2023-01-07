@@ -29,7 +29,7 @@ enum FunctionKind {
 
 impl<'a> Parser<'a> {
     pub fn new(mut tokens: TokenStream<'a>) -> Self {
-        let next = tokens.by_ref().take(1).last();
+        let next = tokens.next();
 
         Parser {
             tokens,

@@ -10,3 +10,4 @@ debug-trace-execution = []
 [dependencies]
 thiserror = "1.0.38"
 core = { path = "../core" }
+phf = { version = "0.11.1", features = ["macros"] }

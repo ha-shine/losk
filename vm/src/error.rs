@@ -1,5 +1,4 @@
 use core::Error as CoreError;
-use std::borrow::Cow;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
@@ -9,10 +8,19 @@ pub(crate) enum Error {
     ScannerError { line: usize, source: CoreError },
 
     #[error("[line {line:?}] compile error: {msg:?}")]
-    CompileError { line: usize, msg: Cow<'static, str> },
+    CompileError { line: usize, msg: String },
 
     #[error("[line {line:?}] runtime error: {msg:?}")]
-    RuntimeError { line: usize, msg: Cow<'static, str> },
+    RuntimeError { line: usize, msg: String },
+}
+
+impl From<CoreError> for Error {
+    fn from(value: CoreError) -> Self {
+        Error::ScannerError {
+            line: value.line(),
+            source: value,
+        }
+    }
 }
 
 pub(crate) type Result<T> = std::result::Result<T, Error>;

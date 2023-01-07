@@ -1,4 +1,5 @@
 mod chunk;
+mod compiler;
 mod error;
 mod instruction;
 mod value;

@@ -1,24 +1,6 @@
 use crate::instruction::Constant;
 use crate::value::Value;
 
-#[repr(u8)]
-pub(crate) enum OpCode {
-    Constant = 0,
-    Return = 1,
-}
-
-impl TryInto<OpCode> for u8 {
-    type Error = ();
-
-    fn try_into(self) -> Result<OpCode, Self::Error> {
-        match self {
-            0 => Ok(OpCode::Constant),
-            1 => Ok(OpCode::Return),
-            _ => Err(()),
-        }
-    }
-}
-
 // These instructions need to be able to turn into opcodes (format unknown yet.)
 // And vice versa in the disassembler.
 // The instructions are an array of bytes with no padding for instruction, i.e if the instruction
@@ -26,11 +8,18 @@ impl TryInto<OpCode> for u8 {
 //
 // The chunk object also needs another integer array to store the line number of the source location
 // where the instruction comes from.
+#[derive(Debug)]
 pub(crate) enum Instruction {
     Constant(Constant),
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Negate,
     Return,
 }
 
+#[derive(Debug)]
 pub(crate) struct Chunk {
     instructions: Vec<Instruction>,
     line_numbers: Vec<usize>,
@@ -44,6 +33,28 @@ impl Chunk {
             line_numbers: Vec::new(),
             constants: Vec::new(),
         }
+    }
+
+    pub(crate) fn add_instruction(&mut self, instruction: Instruction, line_number: usize) {
+        self.instructions.push(instruction);
+        self.line_numbers.push(line_number);
+    }
+
+    pub(crate) fn add_constant(
+        &mut self,
+        value: Value,
+        line_number: usize,
+    ) -> Result<u8, &'static str> {
+        if self.constants.len() == u8::MAX as usize {
+            return Err("too many constants in one chunk.");
+        }
+
+        self.instructions.push(Instruction::Constant(Constant {
+            index: self.constants.len() as u8,
+        }));
+        self.constants.push(value);
+        self.line_numbers.push(line_number);
+        Ok(self.constants.len() as u8)
     }
 
     pub(crate) fn get_line(&self, offset: usize) -> Option<&usize> {

@@ -4,24 +4,25 @@ use crate::instruction::Constant;
 use crate::value::Value;
 use crate::Result;
 use std::borrow::Cow;
+use std::ops::{Add, Div, Mul, Sub};
 
-const STACK_MAX: usize = 256;
+const DEFAULT_STACK: usize = 256;
 
 pub(crate) struct VM {
     // instruction pointer, this will be incremented during interpretation
     ip: usize,
 
-    // the stack and the stack pointer that always point to one past the last element
-    stack: [Value; STACK_MAX],
-    sp: usize,
+    // The stack as a growable vector. In textbook, this is represented by an array and a stack
+    // pointer that always point to one element past the top. This is not required here since the
+    // vector already give us those functionality.
+    stack: Vec<Value>,
 }
 
 impl VM {
     pub(crate) fn new() -> Self {
         VM {
             ip: 0,
-            stack: [Value::Empty; STACK_MAX],
-            sp: 0,
+            stack: Vec::with_capacity(DEFAULT_STACK),
         }
     }
 
@@ -37,12 +38,12 @@ impl VM {
                     .get_instruction(self.ip)
                     .ok_or_else(|| Error::RuntimeError {
                         line: *chunk.get_line(self.ip).unwrap(),
-                        msg: Cow::from("What ever"),
+                        msg: String::from("What ever"),
                     })?;
 
             #[cfg(feature = "debug-trace-execution")]
-            for i in 0..self.sp {
-                println!("[ {:10} ]", self.stack[i]);
+            for val in &self.stack {
+                println!("[ {:10} ]", val);
             }
 
             // TODO: Disassemble this instruction if DEBUG_TRACE_EXECUTION is defined. But I guess
@@ -53,10 +54,17 @@ impl VM {
 
             match instruction {
                 Instruction::Constant(val) => self.execute_constant(chunk, val)?,
+                Instruction::Negate => {
+                    let top = self.pop();
+                    self.push(-top);
+                }
+                Instruction::Add => self.execute_binary_op(Value::add),
+                Instruction::Subtract => self.execute_binary_op(Value::sub),
+                Instruction::Multiply => self.execute_binary_op(Value::mul),
+                Instruction::Divide => self.execute_binary_op(Value::div),
                 Instruction::Return => {
                     self.pop();
                 }
-                _ => {}
             }
         }
     }
@@ -66,18 +74,22 @@ impl VM {
             .get_constant(instruction.index as usize)
             .ok_or_else(|| Error::RuntimeError {
                 line: *chunk.get_line(self.ip - 1).unwrap(),
-                msg: Cow::from(""),
+                msg: String::from(""),
             });
         Ok(())
     }
 
+    fn execute_binary_op(&mut self, op: fn(Value, Value) -> Value) {
+        let rhs = self.pop();
+        let lhs = self.pop();
+        self.push(op(lhs, rhs));
+    }
+
     fn push(&mut self, val: Value) {
-        self.stack[self.sp] = val;
-        self.sp += 1;
+        self.stack.push(val)
     }
 
     fn pop(&mut self) -> Value {
-        self.sp -= 1;
-        self.stack[self.sp]
+        self.stack.pop().unwrap()
     }
 }
