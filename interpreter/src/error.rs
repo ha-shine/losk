@@ -16,7 +16,7 @@ pub enum Error {
         // line is copied from token, this is required because thiserror doesn't support field
         // access, e.g {token.line:?}, in error strings
         line: usize,
-        msg: String,
+        msg: &'static str,
     },
 
     #[error("{:?}", msg)]
@@ -41,11 +41,11 @@ pub struct ReturnValue {
 }
 
 impl Error {
-    pub(crate) fn parser_error(token: &Token, msg: &str) -> Self {
+    pub(crate) fn parser_error(token: &Token, msg: &'static str) -> Self {
         Error::ParserError {
             token: token.clone(),
             line: token.line,
-            msg: String::from(msg),
+            msg,
         }
     }
 

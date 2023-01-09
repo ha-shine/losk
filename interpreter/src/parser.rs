@@ -101,11 +101,20 @@ impl<'a> Parser<'a> {
 
     fn function(&mut self, kind: FunctionKind) -> StmtResult {
         let name = self
-            .consume(Type::Identifier, &format!("Expect {:?} name.", kind))?
+            .consume(
+                Type::Identifier,
+                match kind {
+                    FunctionKind::Function => "Expect function name.",
+                    FunctionKind::Method => "Expect method name.",
+                },
+            )?
             .clone();
         self.consume(
             Type::LeftParen,
-            &format!("Expect '(' after {:?} name.", kind),
+            match kind {
+                FunctionKind::Function => "Expect '(' after function name.",
+                FunctionKind::Method => "Expect '(' after method name.",
+            },
         )?;
 
         let mut params = Vec::new();
@@ -131,7 +140,10 @@ impl<'a> Parser<'a> {
         self.consume(Type::RightParen, "Expect ')' after parameters.")?;
         self.consume(
             Type::LeftBrace,
-            &format!("Expect '{{' before {:?} body.", kind),
+            match kind {
+                FunctionKind::Function => "Expect '{' before function body.",
+                FunctionKind::Method => "Expect '{' before method body.",
+            },
         )?;
 
         let body = self.block()?;
@@ -472,7 +484,7 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn consume(&mut self, ty: Type, msg: &str) -> Result<&Token, Error> {
+    fn consume(&mut self, ty: Type, msg: &'static str) -> Result<&Token, Error> {
         if self.check(ty) {
             Ok(self.advance())
         } else {
