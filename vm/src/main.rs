@@ -5,7 +5,7 @@ mod instruction;
 mod value;
 mod vm;
 
-pub(crate) use error::Result;
+pub(crate) use error::VmResult;
 
 fn main() {
     println!("Hello, world!");

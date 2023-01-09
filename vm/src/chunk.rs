@@ -15,7 +15,11 @@ pub(crate) enum Instruction {
     Subtract,
     Multiply,
     Divide,
+    Not,
     Negate,
+    LiteralTrue,
+    LiteralFalse,
+    LiteralNil,
     Return,
 }
 

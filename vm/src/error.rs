@@ -14,6 +14,15 @@ pub(crate) enum Error {
     RuntimeError { line: usize, msg: String },
 }
 
+impl Error {
+    pub(crate) fn runtime(line: usize, msg: &str) -> Error {
+        Error::CompileError {
+            line,
+            msg: msg.to_string(),
+        }
+    }
+}
+
 impl From<CoreError> for Error {
     fn from(value: CoreError) -> Self {
         Error::ScannerError {
@@ -23,4 +32,4 @@ impl From<CoreError> for Error {
     }
 }
 
-pub(crate) type Result<T> = std::result::Result<T, Error>;
+pub(crate) type VmResult<T> = Result<T, Error>;

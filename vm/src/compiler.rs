@@ -116,17 +116,17 @@ impl<'a> Context<'a> {
         ParseRule(None, None, Precedence::None),                 // And
         ParseRule(None, None, Precedence::None),                 // Class
         ParseRule(None, None, Precedence::None),                 // Else
-        ParseRule(None, None, Precedence::None),                 // False
+        ParseRule(Some(Self::literal), None, Precedence::None),  // True
+        ParseRule(Some(Self::literal), None, Precedence::None),  // False
         ParseRule(None, None, Precedence::None),                 // For
         ParseRule(None, None, Precedence::None),                 // Fun
         ParseRule(None, None, Precedence::None),                 // If
-        ParseRule(None, None, Precedence::None),                 // Nil
+        ParseRule(Some(Self::literal), None, Precedence::None),  // Nil
         ParseRule(None, None, Precedence::None),                 // Or
         ParseRule(None, None, Precedence::None),                 // Print
         ParseRule(None, None, Precedence::None),                 // Return
         ParseRule(None, None, Precedence::None),                 // Super
         ParseRule(None, None, Precedence::None),                 // This
-        ParseRule(None, None, Precedence::None),                 // True
         ParseRule(None, None, Precedence::None),                 // Var
         ParseRule(None, None, Precedence::None),                 // While
         ParseRule(None, None, Precedence::None),                 // Error
@@ -175,6 +175,7 @@ impl<'a> Context<'a> {
 
         match ty {
             Type::Minus => self.chunk.add_instruction(Instruction::Negate, line),
+            Type::Bang => self.chunk.add_instruction(Instruction::Not, line),
             _ => panic!("Unreachable"),
         }
     }
@@ -197,6 +198,22 @@ impl<'a> Context<'a> {
             Type::Minus => self.chunk.add_instruction(Instruction::Subtract, line),
             Type::Star => self.chunk.add_instruction(Instruction::Multiply, line),
             Type::Slash => self.chunk.add_instruction(Instruction::Divide, line),
+            _ => panic!("Unreachable"),
+        }
+    }
+
+    fn literal(&mut self) {
+        let prev = self.prev.as_ref().unwrap();
+        match prev.ty {
+            Type::True => self
+                .chunk
+                .add_instruction(Instruction::LiteralTrue, prev.line),
+            Type::False => self
+                .chunk
+                .add_instruction(Instruction::LiteralFalse, prev.line),
+            Type::Nil => self
+                .chunk
+                .add_instruction(Instruction::LiteralNil, prev.line),
             _ => panic!("Unreachable"),
         }
     }
@@ -281,7 +298,7 @@ mod tests {
     #[test]
     fn test_compilation() {
         let mut scanner = Scanner::new();
-        let stream = scanner.scan_tokens("1 + 2 * 20");
+        let stream = scanner.scan_tokens("(-1 + 2) * 3 - -4");
         let compiler = Compiler::new();
         let res = compiler.compile(stream);
 

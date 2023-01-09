@@ -28,6 +28,7 @@ pub enum Type {
     And,
     Class,
     Else,
+    True,
     False,
     For,
     Fun,
@@ -38,7 +39,6 @@ pub enum Type {
     Return,
     Super,
     This,
-    True,
     Var,
     While,
 
