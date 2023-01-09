@@ -59,6 +59,16 @@ impl VM {
 
             match instruction {
                 Instruction::Constant(val) => self.execute_constant(*val)?,
+                Instruction::LiteralTrue => self.push(Value::Bool(true)),
+                Instruction::LiteralFalse => self.push(Value::Bool(false)),
+                Instruction::LiteralNil => self.push(Value::Nil),
+                Instruction::Equal => {
+                    let rhs = self.pop();
+                    let lhs = self.pop();
+                    self.push(Value::Bool(lhs == rhs));
+                }
+                Instruction::Greater => self.execute_binary_op(Value::greater)?,
+                Instruction::Less => self.execute_binary_op(Value::greater)?,
                 Instruction::Negate => {
                     let res = self.pop().neg();
                     self.push(self.value_or_err(res)?);
@@ -71,9 +81,6 @@ impl VM {
                 Instruction::Subtract => self.execute_binary_op(Value::sub)?,
                 Instruction::Multiply => self.execute_binary_op(Value::mul)?,
                 Instruction::Divide => self.execute_binary_op(Value::div)?,
-                Instruction::LiteralTrue => self.push(Value::Bool(true)),
-                Instruction::LiteralFalse => self.push(Value::Bool(false)),
-                Instruction::LiteralNil => self.push(Value::Nil),
                 Instruction::Return => {
                     self.pop();
                 }

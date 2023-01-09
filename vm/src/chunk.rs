@@ -11,15 +11,18 @@ use crate::value::Value;
 #[derive(Debug)]
 pub(crate) enum Instruction {
     Constant(Constant),
+    LiteralTrue,
+    LiteralFalse,
+    LiteralNil,
+    Equal,
+    Greater,
+    Less,
     Add,
     Subtract,
     Multiply,
     Divide,
     Not,
     Negate,
-    LiteralTrue,
-    LiteralFalse,
-    LiteralNil,
     Return,
 }
 

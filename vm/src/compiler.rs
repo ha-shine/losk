@@ -103,13 +103,13 @@ impl<'a> Context<'a> {
         ParseRule(None, Some(Self::binary), Precedence::Factor), // Slash
         ParseRule(None, Some(Self::binary), Precedence::Factor), // Star
         ParseRule(None, None, Precedence::None),                 // Bang
-        ParseRule(None, None, Precedence::None),                 // BangEqual
+        ParseRule(None, Some(Self::binary), Precedence::Equality), // BangEqual
         ParseRule(None, None, Precedence::None),                 // Equal
-        ParseRule(None, None, Precedence::None),                 // EqualEqual
-        ParseRule(None, None, Precedence::None),                 // Greater
-        ParseRule(None, None, Precedence::None),                 // GreaterEqual
-        ParseRule(None, None, Precedence::None),                 // Less
-        ParseRule(None, None, Precedence::None),                 // LessEqual
+        ParseRule(None, Some(Self::binary), Precedence::Equality), // EqualEqual
+        ParseRule(None, Some(Self::binary), Precedence::Comparison), // Greater
+        ParseRule(None, Some(Self::binary), Precedence::Comparison), // GreaterEqual
+        ParseRule(None, Some(Self::binary), Precedence::Comparison), // Less
+        ParseRule(None, Some(Self::binary), Precedence::Comparison), // LessEqual
         ParseRule(None, None, Precedence::None),                 // Identifier
         ParseRule(None, None, Precedence::None),                 // String
         ParseRule(Some(Self::number), None, Precedence::None),   // Number
@@ -198,6 +198,21 @@ impl<'a> Context<'a> {
             Type::Minus => self.chunk.add_instruction(Instruction::Subtract, line),
             Type::Star => self.chunk.add_instruction(Instruction::Multiply, line),
             Type::Slash => self.chunk.add_instruction(Instruction::Divide, line),
+            Type::BangEqual => {
+                self.chunk.add_instruction(Instruction::Equal, line);
+                self.chunk.add_instruction(Instruction::Not, line);
+            }
+            Type::EqualEqual => self.chunk.add_instruction(Instruction::Equal, line),
+            Type::Greater => self.chunk.add_instruction(Instruction::Greater, line),
+            Type::GreaterEqual => {
+                self.chunk.add_instruction(Instruction::Less, line);
+                self.chunk.add_instruction(Instruction::Not, line);
+            }
+            Type::Less => self.chunk.add_instruction(Instruction::Less, line),
+            Type::LessEqual => {
+                self.chunk.add_instruction(Instruction::Greater, line);
+                self.chunk.add_instruction(Instruction::Not, line);
+            }
             _ => panic!("Unreachable"),
         }
     }

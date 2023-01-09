@@ -2,11 +2,31 @@ use core::Literal;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum Value {
     Double(f64),
     Bool(bool),
     Nil,
+}
+
+impl Value {
+    pub(crate) fn greater(self, other: Self) -> Result<Value, &'static str> {
+        match (self, other) {
+            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Bool(lhs > rhs)),
+            (Value::Bool(lhs), Value::Bool(rhs)) => Ok(Value::Bool(lhs & !rhs)),
+            (Value::Nil, Value::Nil) => Ok(Value::Bool(false)),
+            (_, _) => Err("Expect the operands to be of same type."),
+        }
+    }
+
+    pub(crate) fn less(self, other: Self) -> Result<Value, &'static str> {
+        match (self, other) {
+            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Bool(lhs < rhs)),
+            (Value::Bool(lhs), Value::Bool(rhs)) => Ok(Value::Bool(!lhs & rhs)),
+            (Value::Nil, Value::Nil) => Ok(Value::Bool(false)),
+            (_, _) => Err("Expect the operands to be of same type."),
+        }
+    }
 }
 
 impl Display for Value {
