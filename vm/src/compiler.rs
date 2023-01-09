@@ -38,13 +38,14 @@ impl Precedence {
     }
 }
 
+#[allow(dead_code)]
 impl Compiler {
     fn new() -> Self {
         Compiler
     }
 
-    fn compile(&self, stream: TokenStream) -> Result<Chunk, Vec<Error>> {
-        let mut ctx = Context::compiled(stream);
+    fn compile<'a>(&self, stream: TokenStream<'a>) -> Result<Chunk<'a>, Vec<Error>> {
+        let ctx = Context::compiled(stream);
 
         if !ctx.errs.is_empty() {
             Err(ctx.errs)
@@ -56,7 +57,7 @@ impl Compiler {
 
 struct Context<'a> {
     stream: TokenStream<'a>,
-    chunk: Chunk,
+    chunk: Chunk<'a>,
 
     curr: Option<Token>,
     prev: Option<Token>,
