@@ -1,4 +1,4 @@
-use std::borrow::{Borrow, BorrowMut};
+use std::fmt::{Debug, Formatter};
 
 // UnsafeRef is a wrapper around the raw pointer that provides the same ergonomics as RefCell, but
 // doesn't do any runtime checks. The referred-to object is expected to be alive for the lifetime
@@ -7,6 +7,12 @@ use std::borrow::{Borrow, BorrowMut};
 #[derive(PartialEq)]
 pub(crate) struct UnsafeRef<T> {
     ptr: *const T,
+}
+
+impl<T> Debug for UnsafeRef<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:p}", self.ptr)
+    }
 }
 
 impl<T> Clone for UnsafeRef<T> {
@@ -21,16 +27,12 @@ impl<T> UnsafeRef<T> {
     pub(crate) fn new(obj: &T) -> Self {
         UnsafeRef { ptr: obj }
     }
-}
 
-impl<T> Borrow<T> for UnsafeRef<T> {
-    fn borrow(&self) -> &T {
+    pub(crate) fn borrow(&self) -> &T {
         unsafe { &*self.ptr as &T }
     }
-}
 
-impl<T> BorrowMut<T> for UnsafeRef<T> {
-    fn borrow_mut(&mut self) -> &mut T {
+    pub(crate) fn borrow_mut(&mut self) -> &mut T {
         unsafe {
             let mut_ptr = self.ptr as *mut T;
             &mut *mut_ptr as &mut T

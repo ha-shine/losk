@@ -14,6 +14,7 @@ pub(crate) enum Instruction {
     LiteralTrue,
     LiteralFalse,
     LiteralNil,
+    Pop,
     Equal,
     Greater,
     Less,
@@ -23,6 +24,7 @@ pub(crate) enum Instruction {
     Divide,
     Not,
     Negate,
+    Print,
     Return,
 }
 

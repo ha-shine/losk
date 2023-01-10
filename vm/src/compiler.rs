@@ -40,11 +40,11 @@ impl Precedence {
 
 #[allow(dead_code)]
 impl Compiler {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Compiler
     }
 
-    fn compile(&self, stream: TokenStream) -> Result<Chunk, Vec<Error>> {
+    pub(crate) fn compile(&self, stream: TokenStream) -> Result<Chunk, Vec<Error>> {
         let ctx = Context::compiled(stream);
 
         if !ctx.errs.is_empty() {
@@ -134,12 +134,11 @@ impl<'a> Context<'a> {
     ];
 
     fn compiled(mut stream: TokenStream<'a>) -> Self {
-        let curr = stream.next();
         let mut ctx = Context {
             stream,
             chunk: Chunk::new(),
 
-            curr,
+            curr: None,
             prev: None,
 
             errs: Vec::new(),
@@ -150,10 +149,41 @@ impl<'a> Context<'a> {
         ctx
     }
 
-    // NOTE: In Textbook, makeConstant() create a constant and returns the index while emitConstant()
-    //  will call this and add the instruction.
     fn compile(&mut self) {
+        self.advance();
+        while !self.match_type(Type::Eof) {
+            self.declaration();
+        }
+    }
+
+    fn declaration(&mut self) {
+        self.statement();
+
+        if self.panic {
+            self.synchronize();
+        }
+    }
+
+    fn statement(&mut self) {
+        if self.match_type(Type::Print) {
+            self.print_statement();
+        } else {
+            self.expression_statement();
+        }
+    }
+
+    fn print_statement(&mut self) {
         self.expression();
+        self.consume(Type::SemiColon, "Expect ';' after value.");
+        self.chunk
+            .add_instruction(Instruction::Print, self.prev.as_ref().unwrap().line);
+    }
+
+    fn expression_statement(&mut self) {
+        self.expression();
+        self.consume(Type::SemiColon, "Expect ';' after expression.");
+        self.chunk
+            .add_instruction(Instruction::Pop, self.prev.as_ref().unwrap().line);
     }
 
     fn expression(&mut self) {
@@ -292,6 +322,19 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn match_type(&mut self, ty: Type) -> bool {
+        if !self.check(ty) {
+            false
+        } else {
+            self.advance();
+            true
+        }
+    }
+
+    fn check(&self, ty: Type) -> bool {
+        self.curr.as_ref().unwrap().ty == ty
+    }
+
     fn error_at(&mut self, msg: &str) {
         if self.panic {
             return;
@@ -309,6 +352,32 @@ impl<'a> Context<'a> {
             line,
             msg: String::from(msg),
         })
+    }
+
+    // Synchronize the token stream if an error is found during compilation, and the course of action
+    // is to simply skip all tokens until the end of statement or the eof is found.
+    fn synchronize(&mut self) {
+        self.panic = false;
+
+        while self.curr.as_ref().unwrap().ty != Type::Eof {
+            if let Type::SemiColon = self.prev.as_ref().unwrap().ty {
+                return;
+            }
+
+            match self.curr.as_ref().unwrap().ty {
+                Type::Class
+                | Type::Fun
+                | Type::Var
+                | Type::For
+                | Type::If
+                | Type::While
+                | Type::Print
+                | Type::Return => {
+                    return;
+                }
+                _ => {}
+            }
+        }
     }
 }
 

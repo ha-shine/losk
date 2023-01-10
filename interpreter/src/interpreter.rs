@@ -485,7 +485,7 @@ mod tests {
     use crate::resolver::Resolver;
     use losk_core::Scanner;
 
-    fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
+    fn test_program(src: &str, out: Option<&str>, err: Option<&str>) {
         println!("Testing source:\n{}", src);
 
         let mut scanner = Scanner::new();
@@ -526,11 +526,12 @@ mod tests {
     }
 
     #[test]
-    fn test_lox_programs() {
+    fn test_programs() {
         let tests = [
-            // binary and grouping expressions, with precedence
-            ("print (1 + 2) * 5 + 2;", "17\n"),
-            ("print \"hello \" + \"world\";", "hello world\n"),
+            (
+                include_str!("../../data/print_expression.lox"),
+                include_str!("../../data/print_expression.lox.expected"),
+            ),
             // logical expressions
             ("print false or true;", "true\n"),
             // unary expressions
@@ -545,41 +546,41 @@ mod tests {
             // printing function
             ("print clock;", "<Function clock>\n"),
             (
-                include_str!("../data/if_else.lox"),
-                include_str!("../data/if_else.lox.expected"),
+                include_str!("../../data/if_else.lox"),
+                include_str!("../../data/if_else.lox.expected"),
             ),
             (
-                include_str!("../data/while.lox"),
-                include_str!("../data/while.lox.expected"),
+                include_str!("../../data/while.lox"),
+                include_str!("../../data/while.lox.expected"),
             ),
             (
-                include_str!("../data/for.lox"),
-                include_str!("../data/for.lox.expected"),
+                include_str!("../../data/for.lox"),
+                include_str!("../../data/for.lox.expected"),
             ),
             (
-                include_str!("../data/binding.lox"),
-                include_str!("../data/binding.lox.expected"),
+                include_str!("../../data/binding.lox"),
+                include_str!("../../data/binding.lox.expected"),
             ),
             (
-                include_str!("../data/fib.lox"),
-                include_str!("../data/fib.lox.expected"),
+                include_str!("../../data/fib.lox"),
+                include_str!("../../data/fib.lox.expected"),
             ),
             (
-                include_str!("../data/make_counter.lox"),
-                include_str!("../data/make_counter.lox.expected"),
+                include_str!("../../data/make_counter.lox"),
+                include_str!("../../data/make_counter.lox.expected"),
             ),
             (
-                include_str!("../data/class.lox"),
-                include_str!("../data/class.lox.expected"),
+                include_str!("../../data/class.lox"),
+                include_str!("../../data/class.lox.expected"),
             ),
             (
-                include_str!("../data/inheritance.lox"),
-                include_str!("../data/inheritance.lox.expected"),
+                include_str!("../../data/inheritance.lox"),
+                include_str!("../../data/inheritance.lox.expected"),
             ),
         ];
 
         for (src, expected) in tests {
-            test_statements(src, Some(expected), None);
+            test_program(src, Some(expected), None);
         }
     }
 
@@ -605,7 +606,7 @@ mod tests {
         ];
 
         for (src, expected) in tests {
-            test_statements(src, None, Some(expected));
+            test_program(src, None, Some(expected));
         }
     }
 
@@ -617,7 +618,7 @@ mod tests {
         ];
 
         for (src, expected) in tests {
-            test_statements(src, None, Some(expected));
+            test_program(src, None, Some(expected));
         }
     }
 
@@ -630,7 +631,7 @@ mod tests {
         )];
 
         for (src, expected) in tests {
-            test_statements(src, None, Some(expected));
+            test_program(src, None, Some(expected));
         }
     }
 
@@ -638,18 +639,18 @@ mod tests {
     fn test_native_functions() {
         let tests = ["clock();"];
         for test in tests {
-            test_statements(test, None, None);
+            test_program(test, None, None);
         }
     }
 
     #[test]
     fn test_native_functions_with_wrong_argument_number() {
-        test_statements("clock(1);", None, Some("Expected 0 arguments but got 1."))
+        test_program("clock(1);", None, Some("Expected 0 arguments but got 1."))
     }
 
     #[test]
     fn test_this_cant_be_used_outside_of_a_class() {
-        test_statements(
+        test_program(
             "print this;",
             None,
             Some("Can't use 'this' outside of a class."),
@@ -658,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_cant_return_from_initializer() {
-        test_statements(
+        test_program(
             "class Person { init() { return 1; } }",
             None,
             Some("Can't return a value from an initializer."),
@@ -667,12 +668,12 @@ mod tests {
 
     #[test]
     fn test_can_return_early_from_initializer() {
-        test_statements("class Person { init() { return; } }", None, None);
+        test_program("class Person { init() { return; } }", None, None);
     }
 
     #[test]
     fn test_non_existent_super_method_throws_error() {
-        test_statements(
+        test_program(
             "\
         class Person {}
         class Employee < Person {
@@ -689,7 +690,7 @@ mod tests {
 
     #[test]
     fn test_super_cant_be_used_outside_of_a_class() {
-        test_statements(
+        test_program(
             "print super.cook();",
             None,
             Some("Can't use 'super' outside of a class."),
@@ -698,7 +699,7 @@ mod tests {
 
     #[test]
     fn test_super_cant_be_used_inside_a_class_with_no_superclass() {
-        test_statements(
+        test_program(
             "class Person { greet() { super.cook(); } }",
             None,
             Some("Can't use 'super' in a class with no superclass."),

@@ -5,8 +5,10 @@ use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
-use std::borrow::Borrow;
-use std::fmt::{Display, Formatter};
+use std::cell::RefCell;
+use std::fmt::{Debug, Display, Formatter};
+use std::io::Write;
+use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
 
@@ -29,7 +31,18 @@ impl Display for StackValue {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{:p}", val),
+            StackValue::Obj(val) => write!(f, "{}", val.borrow().value),
+            StackValue::Nil => write!(f, "nil"),
+        }
+    }
+}
+
+impl Debug for StackValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StackValue::Num(val) => write!(f, "{}", val),
+            StackValue::Bool(val) => write!(f, "{}", val),
+            StackValue::Obj(val) => write!(f, "{:?} -> {}", val, val.borrow().value),
             StackValue::Nil => write!(f, "nil"),
         }
     }
@@ -39,6 +52,14 @@ impl Display for StackValue {
 #[derive(PartialEq)]
 pub(crate) enum HeapValue {
     Str(String),
+}
+
+impl Display for HeapValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HeapValue::Str(val) => write!(f, "{}", val),
+        }
+    }
 }
 
 #[allow(dead_code)]
@@ -85,6 +106,9 @@ pub(crate) struct VM {
     // Also it would be cool to support some sort of debugger, where the user can walk the chunk
     // instructions as the VM executes them.
     chunk: Chunk,
+
+    // The VM will write the output strings into this stdout
+    stdout: Rc<RefCell<dyn Write>>,
 }
 
 enum StackOrHeap {
@@ -96,12 +120,13 @@ type OpResult = Result<StackOrHeap, &'static str>;
 
 #[allow(dead_code)]
 impl VM {
-    pub(crate) fn new(chunk: Chunk) -> Self {
+    pub(crate) fn new(stdout: Rc<RefCell<dyn Write>>, chunk: Chunk) -> Self {
         VM {
             ip: 0,
             stack: Vec::with_capacity(DEFAULT_STACK),
             objects: LinkedList::new(ListAdapter::new()),
             chunk,
+            stdout,
         }
     }
 
@@ -112,13 +137,14 @@ impl VM {
 
     fn run(&mut self) -> VmResult<()> {
         loop {
-            let instruction = self.chunk.get_instruction(self.ip).ok_or_else(|| {
-                Error::runtime(*self.chunk.get_line(self.ip).unwrap(), "What ever")
-            })?;
+            let instruction = match self.chunk.get_instruction(self.ip) {
+                Some(instruction) => instruction,
+                None => return Ok(()),
+            };
 
             #[cfg(feature = "debug-trace-execution")]
             for val in &self.stack {
-                println!("[ {:10} ]", val);
+                writeln!(self.stdout.borrow_mut(), "[ {:10?} ]", val).unwrap();
             }
 
             // TODO: Disassemble this instruction if DEBUG_TRACE_EXECUTION is defined. But I guess
@@ -132,6 +158,9 @@ impl VM {
                 Instruction::LiteralTrue => self.push(StackValue::Bool(true)),
                 Instruction::LiteralFalse => self.push(StackValue::Bool(false)),
                 Instruction::LiteralNil => self.push(StackValue::Nil),
+                Instruction::Pop => {
+                    self.pop();
+                }
                 Instruction::Equal => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -145,6 +174,10 @@ impl VM {
                 Instruction::Subtract => self.execute_binary_op(Self::sub)?,
                 Instruction::Multiply => self.execute_binary_op(Self::mul)?,
                 Instruction::Divide => self.execute_binary_op(Self::div)?,
+                Instruction::Print => {
+                    let val = self.pop();
+                    writeln!(self.stdout.borrow_mut(), "{}", val).unwrap();
+                }
                 Instruction::Return => {
                     self.pop();
                 }
@@ -309,5 +342,54 @@ impl VM {
 
         self.objects.push_front(hval);
         self.stack.push(sval);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::compiler::Compiler;
+    use crate::error::Error;
+    use crate::vm::VM;
+    use losk_core::Scanner;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::str;
+
+    fn test_program(src: &str, out: Option<&str>, err: Option<&str>) {
+        println!("Testing source:\n{}", src);
+
+        let mut scanner = Scanner::new();
+        let compiler = Compiler::new();
+        let chunk = compiler.compile(scanner.scan_tokens(src)).unwrap();
+        let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+
+        let mut vm = VM::new(output.clone(), chunk);
+        let result = vm.run();
+
+        match (result, err) {
+            (Err(Error::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
+            (Err(Error::RuntimeError { msg, .. }), None) => {
+                panic!("Not expecting any error, found '{}'", msg)
+            }
+            (Ok(_), Some(err)) => panic!("Expecting an error '{}', found none.", err),
+            _ => {}
+        }
+
+        if let Some(out) = out {
+            assert_eq!(str::from_utf8(&output.borrow()).unwrap(), out);
+        }
+        println!("\n\n");
+    }
+
+    #[test]
+    fn test_programs() {
+        let tests = [(
+            include_str!("../../data/print_expression.lox"),
+            include_str!("../../data/print_expression.lox.expected"),
+        )];
+
+        for (src, expected) in tests {
+            test_program(src, Some(expected), None);
+        }
     }
 }
