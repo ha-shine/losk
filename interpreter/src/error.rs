@@ -1,6 +1,5 @@
 use crate::value::Value;
-use core::Error as CoreError;
-use core::Token;
+use losk_core::{Error as CoreError, Token};
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]

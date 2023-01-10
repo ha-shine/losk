@@ -1,7 +1,7 @@
 [workspace]
 
 members = [
-    "core",
+    "losk-core",
     "interpreter",
     "vm"
 ]

@@ -10,7 +10,7 @@ use crate::env::Environment;
 use crate::error::Error;
 use crate::resolver::ResolvedStmts;
 use crate::value::Value;
-use core::{Token, TokenIndex, Type};
+use losk_core::{Token, TokenIndex, Type};
 
 pub struct Interpreter {
     globals: Rc<RefCell<Environment>>,
@@ -483,7 +483,7 @@ mod tests {
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
     use crate::resolver::Resolver;
-    use core::Scanner;
+    use losk_core::Scanner;
 
     fn test_statements(src: &str, out: Option<&str>, err: Option<&str>) {
         println!("Testing source:\n{}", src);

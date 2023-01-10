@@ -1,4 +1,4 @@
-use core::Literal;
+use losk_core::Literal;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
@@ -6,15 +6,15 @@ use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 // The chunk store them in a constant pool which are referred by their index when the vm executes
 // the bytecode (which is the chunk).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Value<'a> {
+pub(crate) enum Value {
     Double(f64),
     Bool(bool),
-    Str(&'a str),
+    Str(String),
     Nil,
 }
 
-impl<'a> Value<'a> {
-    pub(crate) fn greater(self, other: Self) -> Result<Value<'a>, &'static str> {
+impl Value {
+    pub(crate) fn greater(self, other: Self) -> Result<Value, &'static str> {
         match (self, other) {
             (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Bool(lhs > rhs)),
             (Value::Bool(lhs), Value::Bool(rhs)) => Ok(Value::Bool(lhs & !rhs)),
@@ -23,7 +23,7 @@ impl<'a> Value<'a> {
         }
     }
 
-    pub(crate) fn less(self, other: Self) -> Result<Value<'a>, &'static str> {
+    pub(crate) fn less(self, other: Self) -> Result<Value, &'static str> {
         match (self, other) {
             (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Bool(lhs < rhs)),
             (Value::Bool(lhs), Value::Bool(rhs)) => Ok(Value::Bool(!lhs & rhs)),
@@ -33,7 +33,7 @@ impl<'a> Value<'a> {
     }
 }
 
-impl<'a> Display for Value<'a> {
+impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Value::Double(val) => write!(f, "{}", val),
@@ -44,8 +44,8 @@ impl<'a> Display for Value<'a> {
     }
 }
 
-impl<'a> Add for Value<'a> {
-    type Output = Result<Value<'a>, &'static str>;
+impl Add for Value {
+    type Output = Result<Value, &'static str>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
@@ -55,8 +55,8 @@ impl<'a> Add for Value<'a> {
     }
 }
 
-impl<'a> Sub for Value<'a> {
-    type Output = Result<Value<'a>, &'static str>;
+impl Sub for Value {
+    type Output = Result<Value, &'static str>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
@@ -66,8 +66,8 @@ impl<'a> Sub for Value<'a> {
     }
 }
 
-impl<'a> Mul for Value<'a> {
-    type Output = Result<Value<'a>, &'static str>;
+impl Mul for Value {
+    type Output = Result<Value, &'static str>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
@@ -77,8 +77,8 @@ impl<'a> Mul for Value<'a> {
     }
 }
 
-impl<'a> Div for Value<'a> {
-    type Output = Result<Value<'a>, &'static str>;
+impl Div for Value {
+    type Output = Result<Value, &'static str>;
 
     fn div(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
@@ -88,8 +88,8 @@ impl<'a> Div for Value<'a> {
     }
 }
 
-impl<'a> Neg for Value<'a> {
-    type Output = Result<Value<'a>, &'static str>;
+impl Neg for Value {
+    type Output = Result<Value, &'static str>;
 
     fn neg(self) -> Self::Output {
         match self {
@@ -99,8 +99,8 @@ impl<'a> Neg for Value<'a> {
     }
 }
 
-impl<'a> Not for Value<'a> {
-    type Output = Result<Value<'a>, &'static str>;
+impl Not for Value {
+    type Output = Result<Value, &'static str>;
 
     fn not(self) -> Self::Output {
         match self {
@@ -110,12 +110,12 @@ impl<'a> Not for Value<'a> {
     }
 }
 
-impl<'a> From<Literal> for Value<'a> {
+impl<'a> From<Literal> for Value {
     fn from(value: Literal) -> Self {
         match value {
-            Literal::Str(_) => Value::Nil,
+            Literal::Str(val) => Value::Str(val),
             Literal::Num(val) => Value::Double(val),
-            Literal::Bool(_) => Value::Nil,
+            Literal::Bool(val) => Value::Bool(val),
             Literal::Nil => Value::Nil,
         }
     }

@@ -1,8 +1,11 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
 use crate::instruction::Constant;
+use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
+use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
+use std::borrow::Borrow;
 use std::fmt::{Display, Formatter};
 
 const DEFAULT_STACK: usize = 256;
@@ -17,7 +20,7 @@ enum StackValue {
     // Plus doing this as reference means there will be a sea of lifetime indicators in here.
     // This probably should be refactored out into its own RefCell-ish type, but this will suffice
     // for now.
-    Obj(*const Object),
+    Obj(UnsafeRef<Object>),
     Nil,
 }
 
@@ -33,17 +36,36 @@ impl Display for StackValue {
 }
 
 #[allow(dead_code)]
-pub(crate) enum ObjectValue {
+#[derive(PartialEq)]
+pub(crate) enum HeapValue {
     Str(String),
 }
 
 #[allow(dead_code)]
 pub(crate) struct Object {
-    value: ObjectValue,
+    link: LinkedListLink,
+    value: HeapValue,
+}
+
+intrusive_adapter!(ListAdapter = Box<Object>: Object { link: LinkedListLink });
+
+impl Object {
+    fn new(val: HeapValue) -> Box<Object> {
+        Box::new(Object {
+            link: LinkedListLink::new(),
+            value: val,
+        })
+    }
+}
+
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        self.value.eq(&other.value)
+    }
 }
 
 #[allow(dead_code)]
-pub(crate) struct VM<'a> {
+pub(crate) struct VM {
     // instruction pointer, this will be incremented during interpretation
     ip: usize,
 
@@ -53,7 +75,7 @@ pub(crate) struct VM<'a> {
     stack: Vec<StackValue>,
 
     // List of objects currently allocated on the heap
-    objects: Vec<Object>,
+    objects: LinkedList<ListAdapter>,
 
     // Probably would be better to use a context object for compiling, so I dun have to pass
     // the chunk around, or take ownership of it in the VM. But currently, creating a VM entails
@@ -62,18 +84,23 @@ pub(crate) struct VM<'a> {
     // existing VM and resetting the stack (and ip) after runtime errors.
     // Also it would be cool to support some sort of debugger, where the user can walk the chunk
     // instructions as the VM executes them.
-    chunk: Chunk<'a>,
+    chunk: Chunk,
 }
 
-type OpResult = Result<(StackValue, Option<Object>), &'static str>;
+enum StackOrHeap {
+    Stack(StackValue),
+    Heap(HeapValue),
+}
+
+type OpResult = Result<StackOrHeap, &'static str>;
 
 #[allow(dead_code)]
-impl<'a> VM<'a> {
-    pub(crate) fn new(chunk: Chunk<'a>) -> Self {
+impl VM {
+    pub(crate) fn new(chunk: Chunk) -> Self {
         VM {
             ip: 0,
             stack: Vec::with_capacity(DEFAULT_STACK),
-            objects: Vec::new(),
+            objects: LinkedList::new(ListAdapter::new()),
             chunk,
         }
     }
@@ -133,7 +160,12 @@ impl<'a> VM<'a> {
                     line: *self.chunk.get_line(self.ip - 1).unwrap(),
                     msg: String::from(""),
                 })?;
-        // self.push(*constant);
+        match constant {
+            Value::Double(val) => self.push(StackValue::Num(*val)),
+            Value::Bool(val) => self.push(StackValue::Bool(*val)),
+            Value::Str(val) => self.allocate(HeapValue::Str(val.clone())),
+            Value::Nil => self.push(StackValue::Nil),
+        }
         Ok(())
     }
 
@@ -155,11 +187,12 @@ impl<'a> VM<'a> {
 
     fn store_op_result(&mut self, res: OpResult) -> VmResult<()> {
         match res {
-            Ok((stack, heap)) => {
-                self.stack.push(stack);
-                if let Some(val) = heap {
-                    // TODO Add heap value
-                }
+            Ok(StackOrHeap::Stack(val)) => {
+                self.stack.push(val);
+                Ok(())
+            }
+            Ok(StackOrHeap::Heap(val)) => {
+                self.allocate(val);
                 Ok(())
             }
             Err(msg) => Err(Error::runtime(
@@ -178,57 +211,82 @@ impl<'a> VM<'a> {
     // Care needs to be taken when adding values to heap.
     fn add(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
         match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => Ok((StackValue::Num(l + r), None)),
-            (StackValue::Obj(l), StackValue::Num(r)) => Ok((StackValue::Nil, None)), // TODO: implement
+            (StackValue::Num(l), StackValue::Num(r)) => {
+                Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
+            }
+            (StackValue::Obj(l), StackValue::Obj(r)) => {
+                let lobj: &Object = l.borrow();
+                let robj: &Object = r.borrow();
+
+                match (&lobj.value, &robj.value) {
+                    (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
+                        let mut res = String::with_capacity(lstr.len() + rstr.len());
+                        res += lstr;
+                        res += rstr;
+                        Ok(StackOrHeap::Heap(HeapValue::Str(res)))
+                    }
+                    _ => Err("Expect both operands to be either numbers or strings."),
+                }
+            }
             (_, _) => Err("Expect both operands to be either numbers or strings."),
         }
     }
 
     fn sub(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
         match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => Ok((StackValue::Num(l - r), None)),
+            (StackValue::Num(l), StackValue::Num(r)) => {
+                Ok(StackOrHeap::Stack(StackValue::Num(l - r)))
+            }
             (_, _) => Err("Expect both operands to be numbers."),
         }
     }
 
     fn mul(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
         match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => Ok((StackValue::Num(l * r), None)),
+            (StackValue::Num(l), StackValue::Num(r)) => {
+                Ok(StackOrHeap::Stack(StackValue::Num(l * r)))
+            }
             (_, _) => Err("Expect both operands to be numbers."),
         }
     }
 
     fn div(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
         match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => Ok((StackValue::Num(l / r), None)),
+            (StackValue::Num(l), StackValue::Num(r)) => {
+                Ok(StackOrHeap::Stack(StackValue::Num(l / r)))
+            }
             (_, _) => Err("Expect both operands to be numbers."),
         }
     }
 
     fn greater(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
         match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => Ok((StackValue::Bool(l > r), None)),
+            (StackValue::Num(l), StackValue::Num(r)) => {
+                Ok(StackOrHeap::Stack(StackValue::Bool(l > r)))
+            }
             (_, _) => Err("Expect both operands to be numbers."),
         }
     }
 
     fn less(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
         match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => Ok((StackValue::Bool(l < r), None)),
+            (StackValue::Num(l), StackValue::Num(r)) => {
+                Ok(StackOrHeap::Stack(StackValue::Bool(l < r)))
+            }
             (_, _) => Err("Expect both operands to be numbers."),
         }
     }
 
     fn not(&mut self, val: StackValue) -> OpResult {
         match val {
-            StackValue::Bool(val) => Ok((StackValue::Bool(!val), None)),
+            StackValue::Bool(val) => Ok(StackOrHeap::Stack(StackValue::Bool(!val))),
             _ => Err("Expect operand to be a boolean value."),
         }
     }
 
     fn neg(&mut self, val: StackValue) -> OpResult {
         match val {
-            StackValue::Num(val) => Ok((StackValue::Num(-val), None)),
+            StackValue::Num(val) => Ok(StackOrHeap::Stack(StackValue::Num(-val))),
             _ => Err("Expect operand to be a number value."),
         }
     }
@@ -243,5 +301,13 @@ impl<'a> VM<'a> {
 
     fn pop(&mut self) -> StackValue {
         self.stack.pop().unwrap()
+    }
+
+    fn allocate(&mut self, val: HeapValue) {
+        let hval = Object::new(val);
+        let sval = StackValue::Obj(UnsafeRef::new(&hval));
+
+        self.objects.push_front(hval);
+        self.stack.push(sval);
     }
 }

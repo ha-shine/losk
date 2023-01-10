@@ -1,5 +1,5 @@
 use crate::callable::{Callable, Instance};
-use core::Literal;
+use losk_core::Literal;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};

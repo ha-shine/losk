@@ -1,7 +1,7 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
 use crate::value::Value;
-use core::{Token, TokenStream, Type};
+use losk_core::{Token, TokenStream, Type};
 
 pub(crate) struct Compiler;
 
@@ -44,7 +44,7 @@ impl Compiler {
         Compiler
     }
 
-    fn compile<'a>(&self, stream: TokenStream<'a>) -> Result<Chunk<'a>, Vec<Error>> {
+    fn compile(&self, stream: TokenStream) -> Result<Chunk, Vec<Error>> {
         let ctx = Context::compiled(stream);
 
         if !ctx.errs.is_empty() {
@@ -57,7 +57,7 @@ impl Compiler {
 
 struct Context<'a> {
     stream: TokenStream<'a>,
-    chunk: Chunk<'a>,
+    chunk: Chunk,
 
     curr: Option<Token>,
     prev: Option<Token>,
@@ -112,7 +112,7 @@ impl<'a> Context<'a> {
         ParseRule(None, Some(Self::binary), Precedence::Comparison), // Less
         ParseRule(None, Some(Self::binary), Precedence::Comparison), // LessEqual
         ParseRule(None, None, Precedence::None),                 // Identifier
-        ParseRule(None, None, Precedence::None),                 // String
+        ParseRule(Some(Self::string), None, Precedence::None),   // String
         ParseRule(Some(Self::number), None, Precedence::None),   // Number
         ParseRule(None, None, Precedence::None),                 // And
         ParseRule(None, None, Precedence::None),                 // Class
@@ -240,6 +240,12 @@ impl<'a> Context<'a> {
         self.chunk.add_constant(value, prev.line).unwrap();
     }
 
+    fn string(&mut self) {
+        let prev = self.prev.as_ref().unwrap();
+        let value = Value::from(prev.value.clone());
+        self.chunk.add_constant(value, prev.line).unwrap();
+    }
+
     // This will parse an expression with precedence higher than the given one starting at the
     // current token.
     // The first token will always belong to some kind of prefix expression, otherwise it's a syntax
@@ -309,7 +315,7 @@ impl<'a> Context<'a> {
 #[cfg(test)]
 mod tests {
     use crate::compiler::Compiler;
-    use core::*;
+    use losk_core::*;
 
     #[test]
     fn test_compilation() {

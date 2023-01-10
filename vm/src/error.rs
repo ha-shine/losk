@@ -1,4 +1,4 @@
-use core::Error as CoreError;
+use losk_core::Error as CoreError;
 use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]

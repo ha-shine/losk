@@ -27,13 +27,13 @@ pub(crate) enum Instruction {
 }
 
 #[derive(Debug)]
-pub(crate) struct Chunk<'a> {
+pub(crate) struct Chunk {
     instructions: Vec<Instruction>,
     line_numbers: Vec<usize>,
-    constants: Vec<Value<'a>>,
+    constants: Vec<Value>,
 }
 
-impl<'a> Chunk<'a> {
+impl Chunk {
     pub(crate) fn new() -> Self {
         Chunk {
             instructions: Vec::new(),
@@ -49,7 +49,7 @@ impl<'a> Chunk<'a> {
 
     pub(crate) fn add_constant(
         &mut self,
-        value: Value<'a>,
+        value: Value,
         line_number: usize,
     ) -> Result<u8, &'static str> {
         if self.constants.len() == u8::MAX as usize {

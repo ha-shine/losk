@@ -1,6 +1,6 @@
 use crate::ast::{Expr, Stmt};
 use crate::error::Error;
-use core::{Token, TokenStream, Type};
+use losk_core::{Token, TokenStream, Type};
 use std::rc::Rc;
 
 pub struct Parser<'a> {
@@ -538,8 +538,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use crate::ast::{Expr, Stmt};
     use crate::parser::{Parser, StmtStream};
-    use core::Scanner;
-    use core::{Literal, Token, Type};
+    use losk_core::{Literal, Scanner, Token, Type};
 
     macro_rules! token {
         ($ty:ident, $lex:literal, $col:literal, $idx:literal) => {

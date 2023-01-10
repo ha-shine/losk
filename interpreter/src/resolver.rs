@@ -3,7 +3,7 @@ use crate::error::Error;
 use crate::interpreter::Interpreter;
 use crate::parser::StmtStream;
 use crate::value::Value;
-use core::Token;
+use losk_core::Token;
 use std::collections::HashMap;
 
 enum State {

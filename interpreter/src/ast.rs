@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::value::Value;
-use core::Token;
+use losk_core::Token;
 use std::rc::Rc;
 
 // Currently tokens are cloned in every creation (stmt or expr) because they are not that
