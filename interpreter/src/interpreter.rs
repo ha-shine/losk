@@ -537,11 +537,9 @@ mod tests {
             // unary expressions
             ("print !true;", "false\n"),
             ("print -10.5;", "-10.5\n"),
-            // variable assignment
             (
-                "var foo = \"bar\";\
-                 print foo;",
-                "bar\n",
+                include_str!("../../data/var_assignment.lox"),
+                include_str!("../../data/var_assignment.lox.expected"),
             ),
             // printing function
             ("print clock;", "<Function clock>\n"),

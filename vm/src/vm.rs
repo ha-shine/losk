@@ -6,6 +6,7 @@ use crate::value::Value;
 use crate::VmResult;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
 use std::rc::Rc;
@@ -107,6 +108,13 @@ pub(crate) struct VM {
     // instructions as the VM executes them.
     chunk: Chunk,
 
+    // Globals are used to map between a variable defined on the global scope to it's corresponding
+    // value. The values are of type `StackValue` because the globals can be mapped to either stack
+    // or heap values. The expression after the var declaration statement is pushed onto the stack
+    // so it makes sense to map to a `StackValue`. Care should be taken so that the GC scans this
+    // table for reachability too.
+    globals: HashMap<String, StackValue>,
+
     // The VM will write the output strings into this stdout
     stdout: Rc<RefCell<dyn Write>>,
 }
@@ -126,6 +134,7 @@ impl VM {
             stack: Vec::with_capacity(DEFAULT_STACK),
             objects: LinkedList::new(ListAdapter::new()),
             chunk,
+            globals: HashMap::new(),
             stdout,
         }
     }
@@ -160,6 +169,33 @@ impl VM {
                 Instruction::LiteralNil => self.push(StackValue::Nil),
                 Instruction::Pop => {
                     self.pop();
+                }
+                Instruction::GetGlobal(Constant { index }) => {
+                    let name = match self.chunk.get_constant(*index as usize) {
+                        Some(Value::Str(name)) => name,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    match self.globals.get(name) {
+                        Some(sval) => self.push(*sval),
+                        None => {
+                            return Err(Error::runtime(
+                                *self.chunk.get_line(self.ip - 1).unwrap(),
+                                &format!("Undefined variable '{}'.", name),
+                            ))
+                        }
+                    }
+                }
+                Instruction::DefineGlobal(Constant { index }) => {
+                    // The global name is stored as a constant value in the constant pool, read
+                    // from the pool to get the name.
+                    let name = match self.chunk.get_constant(*index as usize) {
+                        Some(Value::Str(val)) => val.clone(),
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let val = self.pop();
+                    self.globals.insert(name.clone(), val);
                 }
                 Instruction::Equal => {
                     let rhs = self.pop();
@@ -248,8 +284,8 @@ impl VM {
                 Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
             }
             (StackValue::Obj(l), StackValue::Obj(r)) => {
-                let lobj: &Object = l.borrow();
-                let robj: &Object = r.borrow();
+                let lobj = l.borrow();
+                let robj = r.borrow();
 
                 match (&lobj.value, &robj.value) {
                     (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
@@ -383,10 +419,16 @@ mod tests {
 
     #[test]
     fn test_programs() {
-        let tests = [(
-            include_str!("../../data/print_expression.lox"),
-            include_str!("../../data/print_expression.lox.expected"),
-        )];
+        let tests = [
+            (
+                include_str!("../../data/print_expression.lox"),
+                include_str!("../../data/print_expression.lox.expected"),
+            ),
+            (
+                include_str!("../../data/var_assignment.lox"),
+                include_str!("../../data/var_assignment.lox.expected"),
+            ),
+        ];
 
         for (src, expected) in tests {
             test_program(src, Some(expected), None);

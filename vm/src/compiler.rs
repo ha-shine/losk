@@ -1,5 +1,6 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
+use crate::instruction::Constant;
 use crate::value::Value;
 use losk_core::{Token, TokenStream, Type};
 
@@ -111,7 +112,7 @@ impl<'a> Context<'a> {
         ParseRule(None, Some(Self::binary), Precedence::Comparison), // GreaterEqual
         ParseRule(None, Some(Self::binary), Precedence::Comparison), // Less
         ParseRule(None, Some(Self::binary), Precedence::Comparison), // LessEqual
-        ParseRule(None, None, Precedence::None),                 // Identifier
+        ParseRule(Some(Self::variable), None, Precedence::None), // Identifier
         ParseRule(Some(Self::string), None, Precedence::None),   // String
         ParseRule(Some(Self::number), None, Precedence::None),   // Number
         ParseRule(None, None, Precedence::None),                 // And
@@ -151,17 +152,37 @@ impl<'a> Context<'a> {
 
     fn compile(&mut self) {
         self.advance();
+
+        // Maybe check the result at this level and do the synchronisation here?
         while !self.match_type(Type::Eof) {
             self.declaration();
         }
     }
 
     fn declaration(&mut self) {
-        self.statement();
+        if self.match_type(Type::Var) {
+            self.var_declaration();
+        } else {
+            self.statement();
+        }
 
         if self.panic {
             self.synchronize();
         }
+    }
+
+    fn var_declaration(&mut self) {
+        let constant = self.parse_variable("Expect variable name.");
+
+        if self.match_type(Type::Equal) {
+            self.expression();
+        } else {
+            self.chunk
+                .add_instruction(Instruction::LiteralNil, self.prev.as_ref().unwrap().line);
+        }
+
+        let line = self.consume(Type::SemiColon, "Expect ';' after variable declaration.");
+        self.define_variable(constant, line);
     }
 
     fn statement(&mut self) {
@@ -174,16 +195,14 @@ impl<'a> Context<'a> {
 
     fn print_statement(&mut self) {
         self.expression();
-        self.consume(Type::SemiColon, "Expect ';' after value.");
-        self.chunk
-            .add_instruction(Instruction::Print, self.prev.as_ref().unwrap().line);
+        let line = self.consume(Type::SemiColon, "Expect ';' after value.");
+        self.chunk.add_instruction(Instruction::Print, line);
     }
 
     fn expression_statement(&mut self) {
         self.expression();
-        self.consume(Type::SemiColon, "Expect ';' after expression.");
-        self.chunk
-            .add_instruction(Instruction::Pop, self.prev.as_ref().unwrap().line);
+        let line = self.consume(Type::SemiColon, "Expect ';' after expression.");
+        self.chunk.add_instruction(Instruction::Pop, line);
     }
 
     fn expression(&mut self) {
@@ -267,13 +286,33 @@ impl<'a> Context<'a> {
     fn number(&mut self) {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
-        self.chunk.add_constant(value, prev.line).unwrap();
+        let constant = self.chunk.make_constant(value).unwrap();
+        self.chunk
+            .add_instruction(Instruction::Constant(constant), prev.line);
     }
 
     fn string(&mut self) {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
-        self.chunk.add_constant(value, prev.line).unwrap();
+        let constant = self.chunk.make_constant(value).unwrap();
+        self.chunk
+            .add_instruction(Instruction::Constant(constant), prev.line);
+    }
+
+    fn variable(&mut self) {
+        self.named_variable();
+    }
+
+    // TODO: Both get and define global will create a new constant item even if the get is only
+    //   reusing the previously declared name. The chunk should be refactored to have a global
+    //   map as well, and returned the previous index if it's already defined.
+    fn named_variable(&mut self) {
+        let prev = self.prev.as_ref().unwrap();
+        let name = prev.lexeme.clone();
+        let line = prev.line;
+        let constant = self.identifier_constant(name);
+        self.chunk
+            .add_instruction(Instruction::GetGlobal(constant), line);
     }
 
     // This will parse an expression with precedence higher than the given one starting at the
@@ -304,21 +343,46 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn parse_variable(&mut self, msg: &str) -> Constant {
+        self.consume(Type::Identifier, msg);
+        let prev = self.prev.as_ref().unwrap();
+        self.identifier_constant(prev.lexeme.clone())
+    }
+
+    fn identifier_constant(&mut self, name: String) -> Constant {
+        self.chunk.make_constant(Value::Str(name)).unwrap()
+    }
+
+    fn define_variable(&mut self, constant: Constant, line: usize) {
+        self.chunk
+            .add_instruction(Instruction::DefineGlobal(constant), line);
+    }
+
     fn advance(&mut self) {
         self.prev = self.curr.take();
         self.curr = self.stream.next();
     }
 
-    fn consume(&mut self, ty: Type, msg: &str) {
+    // Consume will return the line number of the consumed token for ease.
+    // Maybe I should return the reference to the token as a result instead of just the line number.
+    // This way, I can bubble up the result back to the main compile function too.
+    fn consume(&mut self, ty: Type, msg: &str) -> usize {
         match &self.curr {
             Some(token) => {
+                let line = token.line;
+
                 if token.ty == ty {
                     self.advance();
                 } else {
-                    self.error_at(msg)
+                    self.error_at(msg);
                 }
+
+                line
             }
-            None => self.error_at(msg),
+            None => {
+                self.error_at(msg);
+                0
+            }
         }
     }
 

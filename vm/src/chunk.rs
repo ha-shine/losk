@@ -15,6 +15,8 @@ pub(crate) enum Instruction {
     LiteralFalse,
     LiteralNil,
     Pop,
+    GetGlobal(Constant),
+    DefineGlobal(Constant),
     Equal,
     Greater,
     Less,
@@ -49,21 +51,15 @@ impl Chunk {
         self.line_numbers.push(line_number);
     }
 
-    pub(crate) fn add_constant(
-        &mut self,
-        value: Value,
-        line_number: usize,
-    ) -> Result<u8, &'static str> {
+    pub(crate) fn make_constant(&mut self, value: Value) -> Result<Constant, &'static str> {
         if self.constants.len() == u8::MAX as usize {
-            return Err("too many constants in one chunk.");
+            return Err("too many constants in one chunk");
         }
 
-        self.instructions.push(Instruction::Constant(Constant {
-            index: self.constants.len() as u8,
-        }));
         self.constants.push(value);
-        self.line_numbers.push(line_number);
-        Ok(self.constants.len() as u8)
+
+        let index = (self.constants.len() as u8) - 1;
+        Ok(Constant { index })
     }
 
     pub(crate) fn get_line(&self, offset: usize) -> Option<&usize> {
