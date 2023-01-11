@@ -17,6 +17,7 @@ pub(crate) enum Instruction {
     Pop,
     GetGlobal(Constant),
     DefineGlobal(Constant),
+    SetGlobal(Constant),
     Equal,
     Greater,
     Less,

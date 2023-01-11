@@ -1,5 +1,4 @@
 // binary and grouping expressions, with precedence
 print (1 + 2) * 5 + 2;
 
-
 print "hello " + "world";

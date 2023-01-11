@@ -67,7 +67,7 @@ struct Context<'a> {
     panic: bool,
 }
 
-type ParseFn<'a> = fn(&mut Context<'a>);
+type ParseFn<'a> = fn(&mut Context<'a>, bool);
 
 struct ParseRule<'a>(Option<ParseFn<'a>>, Option<ParseFn<'a>>, Precedence);
 
@@ -210,12 +210,12 @@ impl<'a> Context<'a> {
         self.parse_precedence(Precedence::Assignment);
     }
 
-    fn grouping(&mut self) {
+    fn grouping(&mut self, _: bool) {
         self.expression();
         self.consume(Type::RightParen, "Expect ')' after expression.");
     }
 
-    fn unary(&mut self) {
+    fn unary(&mut self, _: bool) {
         let (ty, line) = {
             let prev = self.prev.as_ref().unwrap();
             (prev.ty, prev.line)
@@ -230,7 +230,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn binary(&mut self) {
+    fn binary(&mut self, _: bool) {
         let prev = self.prev.as_ref().unwrap();
         let ty = prev.ty;
         let line = prev.line;
@@ -267,7 +267,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn literal(&mut self) {
+    fn literal(&mut self, _: bool) {
         let prev = self.prev.as_ref().unwrap();
         match prev.ty {
             Type::True => self
@@ -283,7 +283,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn number(&mut self) {
+    fn number(&mut self, _: bool) {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = self.chunk.make_constant(value).unwrap();
@@ -291,7 +291,7 @@ impl<'a> Context<'a> {
             .add_instruction(Instruction::Constant(constant), prev.line);
     }
 
-    fn string(&mut self) {
+    fn string(&mut self, _: bool) {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = self.chunk.make_constant(value).unwrap();
@@ -299,20 +299,27 @@ impl<'a> Context<'a> {
             .add_instruction(Instruction::Constant(constant), prev.line);
     }
 
-    fn variable(&mut self) {
-        self.named_variable();
+    fn variable(&mut self, can_assign: bool) {
+        self.named_variable(can_assign);
     }
 
     // TODO: Both get and define global will create a new constant item even if the get is only
     //   reusing the previously declared name. The chunk should be refactored to have a global
     //   map as well, and returned the previous index if it's already defined.
-    fn named_variable(&mut self) {
+    fn named_variable(&mut self, can_assign: bool) {
         let prev = self.prev.as_ref().unwrap();
         let name = prev.lexeme.clone();
         let line = prev.line;
         let constant = self.identifier_constant(name);
-        self.chunk
-            .add_instruction(Instruction::GetGlobal(constant), line);
+
+        if can_assign && self.match_type(Type::Equal) {
+            self.expression();
+            self.chunk
+                .add_instruction(Instruction::SetGlobal(constant), line);
+        } else {
+            self.chunk
+                .add_instruction(Instruction::GetGlobal(constant), line);
+        }
     }
 
     // This will parse an expression with precedence higher than the given one starting at the
@@ -327,8 +334,22 @@ impl<'a> Context<'a> {
         let prev = self.prev.as_ref().unwrap();
         let rule = &Self::PARSE_RULES[prev.ty as usize];
 
+        // This will prevent the compiler from parsing unassign-able expressions.
+        // Say you're parsing "a * b = c + d".
+        // During the second call to `variable()` (an infix rule that stems from `b`) after
+        // parsing "*", the assignment will be parsed in the same function and the parsed result
+        // will be wrong.
+        // To avoid that, if the current precedence is greater than assignment (in the example,
+        // "*"'s precedence is higher so this will be false), the assignability is passed into
+        // prefix function. The variable parsing function will see this and instead of continuing
+        // the consumption of "=", it will stop and produce `GetGlobal` instruction instead.
+        // This means that there will be an equal sign left to be consumed afterwards if the current
+        // precedence is lower than assignment (e.g literals). In that case, the program is trying
+        // to assign a non-assignable expression and this should be notified to the user.
+        let can_assign = precedence as usize <= Precedence::Assignment as usize;
+
         match rule.prefix() {
-            Some(prefix) => prefix(self),
+            Some(prefix) => prefix(self, can_assign),
             None => {
                 self.error_at("Expect expression.");
             }
@@ -339,7 +360,11 @@ impl<'a> Context<'a> {
         {
             self.advance();
             let rule = &Self::PARSE_RULES[self.prev.as_ref().unwrap().ty as usize];
-            (rule.infix().unwrap())(self);
+            (rule.infix().unwrap())(self, false);
+        }
+
+        if can_assign && self.match_type(Type::Equal) {
+            self.error_at("Invalid assignment target.");
         }
     }
 
