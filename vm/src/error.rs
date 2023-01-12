@@ -16,6 +16,13 @@ pub(crate) enum Error {
 
 impl Error {
     pub(crate) fn runtime(line: usize, msg: &str) -> Error {
+        Error::RuntimeError {
+            line,
+            msg: msg.to_string(),
+        }
+    }
+    
+    pub(crate) fn compile(line: usize, msg: &str) -> Error {
         Error::CompileError {
             line,
             msg: msg.to_string(),
@@ -33,3 +40,4 @@ impl From<CoreError> for Error {
 }
 
 pub(crate) type VmResult<T> = Result<T, Error>;
+pub(crate) type CompilerResult<T> = Result<T, Error>;

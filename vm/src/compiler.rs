@@ -1,5 +1,5 @@
 use crate::chunk::{Chunk, Instruction};
-use crate::error::Error;
+use crate::error::{CompilerResult, Error};
 use crate::instruction::{Constant, StackOffset};
 use crate::value::Value;
 use losk_core::{Token, TokenStream, Type};
@@ -81,7 +81,7 @@ struct Context<'a> {
     scope_depth: isize,
 }
 
-type ParseFn<'a> = fn(&mut Context<'a>, bool);
+type ParseFn<'a> = fn(&mut Context<'a>, bool) -> CompilerResult<()>;
 
 struct ParseRule<'a>(Option<ParseFn<'a>>, Option<ParseFn<'a>>, Precedence);
 
@@ -178,94 +178,105 @@ impl<'a> Context<'a> {
 
         // Maybe check the result at this level and do the synchronisation here?
         while !self.match_type(Type::Eof) {
-            self.declaration();
+            match self.declaration() {
+                Ok(_) => {}
+                Err(err) => {
+                    self.errs.push(err);
+                    self.synchronize();
+                }
+            }
         }
     }
 
-    fn declaration(&mut self) {
+    fn declaration(&mut self) -> CompilerResult<()> {
         if self.match_type(Type::Var) {
-            self.var_declaration();
+            self.var_declaration()
         } else {
-            self.statement();
-        }
-
-        if self.panic {
-            self.synchronize();
+            self.statement()
         }
     }
 
-    fn var_declaration(&mut self) {
-        let constant = self.parse_variable("Expect variable name.");
+    fn var_declaration(&mut self) -> CompilerResult<()> {
+        let constant = self.parse_variable("Expect variable name.")?;
 
         if self.match_type(Type::Equal) {
-            self.expression();
+            self.expression()?;
         } else {
             self.chunk
                 .add_instruction(Instruction::LiteralNil, self.prev.as_ref().unwrap().line);
         }
 
-        let line = self.consume(Type::SemiColon, "Expect ';' after variable declaration.");
+        let line = self.consume(Type::SemiColon, "Expect ';' after variable declaration.")?;
         self.define_variable(constant, line);
+        Ok(())
     }
 
-    fn statement(&mut self) {
+    fn statement(&mut self) -> CompilerResult<()> {
         if self.match_type(Type::Print) {
-            self.print_statement();
+            self.print_statement()?;
         } else if self.match_type(Type::LeftBrace) {
             self.begin_scope();
-            self.block();
+            self.block()?;
             self.end_scope();
         } else {
-            self.expression_statement();
+            self.expression_statement()?;
         }
+        Ok(())
     }
 
-    fn print_statement(&mut self) {
-        self.expression();
-        let line = self.consume(Type::SemiColon, "Expect ';' after value.");
+    fn print_statement(&mut self) -> CompilerResult<()> {
+        self.expression()?;
+        let line = self.consume(Type::SemiColon, "Expect ';' after value.")?;
         self.chunk.add_instruction(Instruction::Print, line);
+        Ok(())
     }
 
-    fn expression_statement(&mut self) {
-        self.expression();
-        let line = self.consume(Type::SemiColon, "Expect ';' after expression.");
+    fn expression_statement(&mut self) -> CompilerResult<()> {
+        self.expression()?;
+        let line = self.consume(Type::SemiColon, "Expect ';' after expression.")?;
         self.chunk.add_instruction(Instruction::Pop, line);
+        Ok(())
     }
 
-    fn expression(&mut self) {
+    fn expression(&mut self) -> CompilerResult<()> {
         // Simply parse the expression with lowest precedence
-        self.parse_precedence(Precedence::Assignment);
+        self.parse_precedence(Precedence::Assignment)?;
+        Ok(())
     }
 
-    fn block(&mut self) {
+    fn block(&mut self) -> CompilerResult<()> {
         while !self.check(Type::RightBrace) && !self.check(Type::Eof) {
-            self.declaration();
+            self.declaration()?;
         }
 
-        self.consume(Type::RightBrace, "Expect '}' after block.");
+        self.consume(Type::RightBrace, "Expect '}' after block.")?;
+        Ok(())
     }
 
-    fn grouping(&mut self, _: bool) {
-        self.expression();
-        self.consume(Type::RightParen, "Expect ')' after expression.");
+    fn grouping(&mut self, _: bool) -> CompilerResult<()> {
+        self.expression()?;
+        self.consume(Type::RightParen, "Expect ')' after expression.")?;
+        Ok(())
     }
 
-    fn unary(&mut self, _: bool) {
+    fn unary(&mut self, _: bool) -> CompilerResult<()> {
         let (ty, line) = {
             let prev = self.prev.as_ref().unwrap();
             (prev.ty, prev.line)
         };
 
-        self.parse_precedence(Precedence::Unary);
+        self.parse_precedence(Precedence::Unary)?;
 
         match ty {
             Type::Minus => self.chunk.add_instruction(Instruction::Negate, line),
             Type::Bang => self.chunk.add_instruction(Instruction::Not, line),
             _ => panic!("Unreachable"),
         }
+
+        Ok(())
     }
 
-    fn binary(&mut self, _: bool) {
+    fn binary(&mut self, _: bool) -> CompilerResult<()> {
         let prev = self.prev.as_ref().unwrap();
         let ty = prev.ty;
         let line = prev.line;
@@ -276,7 +287,7 @@ impl<'a> Context<'a> {
         // When the compiler have consumed the "+" sign, it needs to parse the whole expression
         // "3 * 10" first instead of just "3", else the operation order will be incorrect according
         // to the precedence rule.
-        self.parse_precedence(rule.precedence().next());
+        self.parse_precedence(rule.precedence().next())?;
 
         match ty {
             Type::Plus => self.chunk.add_instruction(Instruction::Add, line),
@@ -300,9 +311,11 @@ impl<'a> Context<'a> {
             }
             _ => panic!("Unreachable"),
         }
+
+        Ok(())
     }
 
-    fn literal(&mut self, _: bool) {
+    fn literal(&mut self, _: bool) -> CompilerResult<()> {
         let prev = self.prev.as_ref().unwrap();
         match prev.ty {
             Type::True => self
@@ -316,56 +329,63 @@ impl<'a> Context<'a> {
                 .add_instruction(Instruction::LiteralNil, prev.line),
             _ => panic!("Unreachable"),
         }
+
+        Ok(())
     }
 
-    fn number(&mut self, _: bool) {
+    fn number(&mut self, _: bool) -> CompilerResult<()> {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = self.chunk.make_constant(value).unwrap();
         self.chunk
             .add_instruction(Instruction::Constant(constant), prev.line);
+        Ok(())
     }
 
-    fn string(&mut self, _: bool) {
+    fn string(&mut self, _: bool) -> CompilerResult<()> {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = self.chunk.make_constant(value).unwrap();
         self.chunk
             .add_instruction(Instruction::Constant(constant), prev.line);
+        Ok(())
     }
 
-    fn variable(&mut self, can_assign: bool) {
-        self.named_variable(can_assign);
+    fn variable(&mut self, can_assign: bool) -> CompilerResult<()> {
+        self.named_variable(can_assign)
     }
 
-    fn named_variable(&mut self, can_assign: bool) {
+    fn named_variable(&mut self, can_assign: bool) -> CompilerResult<()> {
         let prev = self.prev.as_ref().unwrap();
 
-        // This clone is not necessary if the variable is local only, this will be solved if the
-        // error_at returns an error instead.
         let name = prev.lexeme.clone();
         let line = prev.line;
-        let arg = self.resolve_local(&name);
-
-        let (set_op, get_op) = if arg != -1 {
-            (
+        let (set_op, get_op) = match self.resolve_local(&name) {
+            // The local variable cannot be resolved locally, so this variable must be a global
+            // variable.
+            Ok(-1) => {
+                let constant = self.identifier_constant(name);
+                (
+                    Instruction::SetGlobal(constant),
+                    Instruction::GetGlobal(constant),
+                )
+            }
+            Ok(arg) => (
                 Instruction::SetLocal(StackOffset { index: arg as u8 }),
                 Instruction::GetLocal(StackOffset { index: arg as u8 }),
-            )
-        } else {
-            let constant = self.identifier_constant(name);
-            (
-                Instruction::SetGlobal(constant),
-                Instruction::GetGlobal(constant),
-            )
+            ),
+            Err(err) => {
+                return Err(err);
+            }
         };
 
         if can_assign && self.match_type(Type::Equal) {
-            self.expression();
+            self.expression()?;
             self.chunk.add_instruction(set_op, line);
         } else {
             self.chunk.add_instruction(get_op, line);
         }
+        Ok(())
     }
 
     // This will parse an expression with precedence higher than the given one starting at the
@@ -375,7 +395,7 @@ impl<'a> Context<'a> {
     // After parsing with prefix function, check if next token's infix operation precedence is
     // higher than the current precedence defined. As long as the next token's infix precedence
     // is higher, the parser will keep parsing those expression until none is left.
-    fn parse_precedence(&mut self, precedence: Precedence) {
+    fn parse_precedence(&mut self, precedence: Precedence) -> CompilerResult<()> {
         self.advance();
         let prev = self.prev.as_ref().unwrap();
         let rule = &Self::PARSE_RULES[prev.ty as usize];
@@ -395,9 +415,9 @@ impl<'a> Context<'a> {
         let can_assign = precedence as usize <= Precedence::Assignment as usize;
 
         match rule.prefix() {
-            Some(prefix) => prefix(self, can_assign),
+            Some(prefix) => prefix(self, can_assign)?,
             None => {
-                self.error_at("Expect expression.");
+                return Err(self.error("Expect expression."));
             }
         }
 
@@ -406,30 +426,31 @@ impl<'a> Context<'a> {
         {
             self.advance();
             let rule = &Self::PARSE_RULES[self.prev.as_ref().unwrap().ty as usize];
-            (rule.infix().unwrap())(self, false);
+            (rule.infix().unwrap())(self, false)?;
         }
 
         if can_assign && self.match_type(Type::Equal) {
-            self.error_at("Invalid assignment target.");
+            Err(self.error("Invalid assignment target."))
+        } else {
+            Ok(())
         }
     }
 
-    fn parse_variable(&mut self, msg: &str) -> Constant {
-        self.consume(Type::Identifier, msg);
+    fn parse_variable(&mut self, msg: &str) -> CompilerResult<Constant> {
+        self.consume(Type::Identifier, msg)?;
         let prev = self.prev.as_ref().unwrap();
         let name = prev.lexeme.clone();
 
-        self.declare_variable();
-        self.identifier_constant(name)
+        self.declare_variable()?;
+        Ok(self.identifier_constant(name))
     }
 
-    fn declare_variable(&mut self) {
+    fn declare_variable(&mut self) -> CompilerResult<()> {
         if self.scope_depth == 0 {
-            return;
+            return Ok(());
         }
 
         let name = self.prev.as_ref().unwrap().lexeme.clone();
-        let mut found = false; // this wouldn't be required if a result is used
         for local in self.locals.iter().rev() {
             // Depth = -1 means the variable has been declared but not defined. Only check the locals
             // from the current scope.
@@ -438,39 +459,35 @@ impl<'a> Context<'a> {
             }
 
             if local.name == name {
-                found = true;
-                break;
+                return Err(self.error("Already a variable with this name in this scope."));
             }
         }
 
-        if found {
-            self.error_at("Already a variable with this name in this scope.");
-        } else {
-            self.add_local(name);
-        }
+        self.add_local(name)?;
+        Ok(())
     }
 
-    fn add_local(&mut self, name: String) {
+    fn add_local(&mut self, name: String) -> CompilerResult<()> {
         if self.locals.len() == Self::STACK_SIZE {
-            self.error_at("Too many local variables in function.");
-            return;
+            Err(self.error("Too many local variables in function."))
+        } else {
+            self.locals.push(Local { name, depth: -1 });
+            Ok(())
         }
-
-        self.locals.push(Local { name, depth: -1 })
     }
 
-    fn resolve_local(&mut self, name: &str) -> isize {
+    fn resolve_local(&mut self, name: &str) -> CompilerResult<isize> {
         for (idx, local) in self.locals.iter().rev().enumerate() {
             if local.name == name {
-                if local.depth == -1 {
-                    self.error_at("Can't read local variable in its own initializer");
-                }
-
-                return idx as isize;
+                return if local.depth == -1 {
+                    Err(self.error("Can't read local variable in its own initializer"))
+                } else {
+                    Ok(idx as isize)
+                };
             }
         }
 
-        -1
+        Ok(-1)
     }
 
     fn identifier_constant(&mut self, name: String) -> Constant {
@@ -520,23 +537,14 @@ impl<'a> Context<'a> {
     // Consume will return the line number of the consumed token for ease.
     // Maybe I should return the reference to the token as a result instead of just the line number.
     // This way, I can bubble up the result back to the main compile function too.
-    fn consume(&mut self, ty: Type, msg: &str) -> usize {
+    fn consume(&mut self, ty: Type, msg: &str) -> CompilerResult<usize> {
         match &self.curr {
-            Some(token) => {
+            Some(token) if token.ty == ty => {
                 let line = token.line;
-
-                if token.ty == ty {
-                    self.advance();
-                } else {
-                    self.error_at(msg);
-                }
-
-                line
+                self.advance();
+                Ok(line)
             }
-            None => {
-                self.error_at(msg);
-                0
-            }
+            _ => Err(self.error(msg)),
         }
     }
 
@@ -553,23 +561,14 @@ impl<'a> Context<'a> {
         self.curr.as_ref().unwrap().ty == ty
     }
 
-    fn error_at(&mut self, msg: &str) {
-        if self.panic {
-            return;
-        }
-
-        self.panic = true;
-
+    fn error(&mut self, msg: &str) -> Error {
         let line = if let Some(curr) = &self.curr {
             curr.line
         } else {
             0
         };
 
-        self.errs.push(Error::CompileError {
-            line,
-            msg: String::from(msg),
-        })
+        Error::compile(line, msg)
     }
 
     // Synchronize the token stream if an error is found during compilation, and the course of action
