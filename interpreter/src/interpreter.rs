@@ -541,6 +541,10 @@ mod tests {
                 include_str!("../../data/var_assignment.lox"),
                 include_str!("../../data/var_assignment.lox.expected"),
             ),
+            (
+                include_str!("../../data/block.lox"),
+                include_str!("../../data/block.lox.expected"),
+            ),
             // printing function
             ("print clock;", "<Function clock>\n"),
             (

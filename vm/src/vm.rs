@@ -1,6 +1,6 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
-use crate::instruction::Constant;
+use crate::instruction::{Constant, StackOffset};
 use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
@@ -170,6 +170,9 @@ impl VM {
                 Instruction::Pop => {
                     self.pop();
                 }
+                Instruction::PopN(n) => {
+                    self.pop_n(*n);
+                }
                 Instruction::GetGlobal(Constant { index }) => {
                     let name = match self.chunk.get_constant(*index as usize) {
                         Some(Value::Str(name)) => name,
@@ -198,6 +201,13 @@ impl VM {
                     self.globals.insert(name.clone(), val);
                 }
                 Instruction::SetGlobal(val) => self.execute_set_global(*val)?,
+                Instruction::GetLocal(StackOffset { index }) => {
+                    let val = self.stack[*index as usize];
+                    self.push(val);
+                }
+                Instruction::SetLocal(StackOffset { index }) => {
+                    self.stack[*index as usize] = *self.stack.last().unwrap();
+                }
                 Instruction::Equal => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -394,6 +404,11 @@ impl VM {
         self.stack.pop().unwrap()
     }
 
+    fn pop_n(&mut self, n: usize) {
+        let start = self.stack.len() - n;
+        self.stack.drain(start..);
+    }
+
     fn peek(&self) -> &StackValue {
         self.stack.last().unwrap()
     }
@@ -446,13 +461,17 @@ mod tests {
     #[test]
     fn test_programs() {
         let tests = [
-            // (
-            //     include_str!("../../data/print_expression.lox"),
-            //     include_str!("../../data/print_expression.lox.expected"),
-            // ),
+            (
+                include_str!("../../data/print_expression.lox"),
+                include_str!("../../data/print_expression.lox.expected"),
+            ),
             (
                 include_str!("../../data/var_assignment.lox"),
                 include_str!("../../data/var_assignment.lox.expected"),
+            ),
+            (
+                include_str!("../../data/block.lox"),
+                include_str!("../../data/block.lox.expected"),
             ),
         ];
 

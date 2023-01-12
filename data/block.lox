@@ -1,0 +1,16 @@
+var name = "Shine";
+
+{
+    print "Hello, " + name;
+    var name = "John";
+    print "Hello, " + name;
+}
+
+print "Hello, " + name;
+
+{
+    var otherName = "John";
+    name = otherName;
+}
+
+print "Hello, " + name;

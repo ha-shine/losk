@@ -1,6 +1,6 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
-use crate::instruction::Constant;
+use crate::instruction::{Constant, StackOffset};
 use crate::value::Value;
 use losk_core::{Token, TokenStream, Type};
 
@@ -56,6 +56,11 @@ impl Compiler {
     }
 }
 
+struct Local {
+    name: String,
+    depth: isize,
+}
+
 struct Context<'a> {
     stream: TokenStream<'a>,
     chunk: Chunk,
@@ -65,6 +70,15 @@ struct Context<'a> {
 
     errs: Vec<Error>,
     panic: bool,
+
+    // locals are used to resolve the declared variables into a stack frame location. `scope_depth`
+    // is an auxiliary data that is used in this task, by tracking which level of scope the compiler
+    // is currently in.
+    // The textbook uses a pointer to token for local's name, but in this implementation, the tokens
+    // are immediately discarded after usage and I can't keep their pointers. So their names will
+    // be copied instead.
+    locals: Vec<Local>,
+    scope_depth: isize,
 }
 
 type ParseFn<'a> = fn(&mut Context<'a>, bool);
@@ -86,12 +100,16 @@ impl<'a> ParseRule<'a> {
 }
 
 impl<'a> Context<'a> {
+    const STACK_SIZE: usize = u8::MAX as usize + 1;
+
     // A Pratt parser's table, where each row map to token type as index. The first column
     // maps a token type to prefix parsing function while the second column maps to infix parsing
     // function. The third column precedence represents the precedence of the infix expression
     // which uses that token as an operator.
     // Precedence of the infix operators don't need to be tracked since the precedence of all prefix
     // operators are the same.
+    // I am not sure whether using this as a const is the best idea since the const in Rust is
+    // like `#define` and the code is copied to every usage.
     const PARSE_RULES: [ParseRule<'a>; 39] = [
         ParseRule(Some(Self::grouping), None, Precedence::None), // LeftParen
         ParseRule(None, None, Precedence::None),                 // RightParen
@@ -134,7 +152,9 @@ impl<'a> Context<'a> {
         ParseRule(None, None, Precedence::None),                 // Error
     ];
 
-    fn compiled(mut stream: TokenStream<'a>) -> Self {
+    // Instead of having this function inside the context, this context should be passed mutably through
+    // compiler's methods. This would make some of the multiple borrows restriction easier.
+    fn compiled(stream: TokenStream<'a>) -> Self {
         let mut ctx = Context {
             stream,
             chunk: Chunk::new(),
@@ -144,6 +164,9 @@ impl<'a> Context<'a> {
 
             errs: Vec::new(),
             panic: false,
+
+            locals: Vec::new(),
+            scope_depth: 0,
         };
 
         ctx.compile();
@@ -188,6 +211,10 @@ impl<'a> Context<'a> {
     fn statement(&mut self) {
         if self.match_type(Type::Print) {
             self.print_statement();
+        } else if self.match_type(Type::LeftBrace) {
+            self.begin_scope();
+            self.block();
+            self.end_scope();
         } else {
             self.expression_statement();
         }
@@ -208,6 +235,14 @@ impl<'a> Context<'a> {
     fn expression(&mut self) {
         // Simply parse the expression with lowest precedence
         self.parse_precedence(Precedence::Assignment);
+    }
+
+    fn block(&mut self) {
+        while !self.check(Type::RightBrace) && !self.check(Type::Eof) {
+            self.declaration();
+        }
+
+        self.consume(Type::RightBrace, "Expect '}' after block.");
     }
 
     fn grouping(&mut self, _: bool) {
@@ -303,22 +338,33 @@ impl<'a> Context<'a> {
         self.named_variable(can_assign);
     }
 
-    // TODO: Both get and define global will create a new constant item even if the get is only
-    //   reusing the previously declared name. The chunk should be refactored to have a global
-    //   map as well, and returned the previous index if it's already defined.
     fn named_variable(&mut self, can_assign: bool) {
         let prev = self.prev.as_ref().unwrap();
+
+        // This clone is not necessary if the variable is local only, this will be solved if the
+        // error_at returns an error instead.
         let name = prev.lexeme.clone();
         let line = prev.line;
-        let constant = self.identifier_constant(name);
+        let arg = self.resolve_local(&name);
+
+        let (set_op, get_op) = if arg != -1 {
+            (
+                Instruction::SetLocal(StackOffset { index: arg as u8 }),
+                Instruction::GetLocal(StackOffset { index: arg as u8 }),
+            )
+        } else {
+            let constant = self.identifier_constant(name);
+            (
+                Instruction::SetGlobal(constant),
+                Instruction::GetGlobal(constant),
+            )
+        };
 
         if can_assign && self.match_type(Type::Equal) {
             self.expression();
-            self.chunk
-                .add_instruction(Instruction::SetGlobal(constant), line);
+            self.chunk.add_instruction(set_op, line);
         } else {
-            self.chunk
-                .add_instruction(Instruction::GetGlobal(constant), line);
+            self.chunk.add_instruction(get_op, line);
         }
     }
 
@@ -371,7 +417,60 @@ impl<'a> Context<'a> {
     fn parse_variable(&mut self, msg: &str) -> Constant {
         self.consume(Type::Identifier, msg);
         let prev = self.prev.as_ref().unwrap();
-        self.identifier_constant(prev.lexeme.clone())
+        let name = prev.lexeme.clone();
+
+        self.declare_variable();
+        self.identifier_constant(name)
+    }
+
+    fn declare_variable(&mut self) {
+        if self.scope_depth == 0 {
+            return;
+        }
+
+        let name = self.prev.as_ref().unwrap().lexeme.clone();
+        let mut found = false; // this wouldn't be required if a result is used
+        for local in self.locals.iter().rev() {
+            // Depth = -1 means the variable has been declared but not defined. Only check the locals
+            // from the current scope.
+            if local.depth != -1 && local.depth < self.scope_depth {
+                break;
+            }
+
+            if local.name == name {
+                found = true;
+                break;
+            }
+        }
+
+        if found {
+            self.error_at("Already a variable with this name in this scope.");
+        } else {
+            self.add_local(name);
+        }
+    }
+
+    fn add_local(&mut self, name: String) {
+        if self.locals.len() == Self::STACK_SIZE {
+            self.error_at("Too many local variables in function.");
+            return;
+        }
+
+        self.locals.push(Local { name, depth: -1 })
+    }
+
+    fn resolve_local(&mut self, name: &str) -> isize {
+        for (idx, local) in self.locals.iter().rev().enumerate() {
+            if local.name == name {
+                if local.depth == -1 {
+                    self.error_at("Can't read local variable in its own initializer");
+                }
+
+                return idx as isize;
+            }
+        }
+
+        -1
     }
 
     fn identifier_constant(&mut self, name: String) -> Constant {
@@ -379,8 +478,38 @@ impl<'a> Context<'a> {
     }
 
     fn define_variable(&mut self, constant: Constant, line: usize) {
+        // For local scope, the variable doesn't even need to be defined. They can be referred
+        // by scope index.
+        if self.scope_depth > 0 {
+            self.mark_initialized();
+            return;
+        }
+
         self.chunk
             .add_instruction(Instruction::DefineGlobal(constant), line);
+    }
+
+    fn mark_initialized(&mut self) {
+        self.locals.last_mut().unwrap().depth = self.scope_depth;
+    }
+
+    fn begin_scope(&mut self) {
+        self.scope_depth += 1;
+    }
+
+    fn end_scope(&mut self) {
+        self.scope_depth -= 1;
+
+        let mut n = 0;
+        while !self.locals.is_empty() && self.locals.last().unwrap().depth > self.scope_depth {
+            self.locals.pop();
+            n += 1;
+        }
+
+        if n > 0 {
+            let line = self.prev.as_ref().unwrap().line;
+            self.chunk.add_instruction(Instruction::PopN(n), line);
+        }
     }
 
     fn advance(&mut self) {
@@ -481,7 +610,5 @@ mod tests {
         let stream = scanner.scan_tokens("(-1 + 2) * 3 - -4");
         let compiler = Compiler::new();
         let res = compiler.compile(stream);
-
-        dbg!(res);
     }
 }

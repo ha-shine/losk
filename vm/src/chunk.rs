@@ -1,4 +1,4 @@
-use crate::instruction::Constant;
+use crate::instruction::{Constant, StackOffset};
 use crate::value::Value;
 
 // These instructions need to be able to turn into opcodes (format unknown yet.)
@@ -8,16 +8,19 @@ use crate::value::Value;
 //
 // The chunk object also needs another integer array to store the line number of the source location
 // where the instruction comes from.
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub(crate) enum Instruction {
     Constant(Constant),
     LiteralTrue,
     LiteralFalse,
     LiteralNil,
     Pop,
+    PopN(usize),
     GetGlobal(Constant),
     DefineGlobal(Constant),
     SetGlobal(Constant),
+    GetLocal(StackOffset),
+    SetLocal(StackOffset),
     Equal,
     Greater,
     Less,
