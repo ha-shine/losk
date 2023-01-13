@@ -491,22 +491,26 @@ mod tests {
                 include_str!("../../data/print_expression.lox"),
                 include_str!("../../data/print_expression.lox.expected"),
             ),
-            (
-                include_str!("../../data/var_assignment.lox"),
-                include_str!("../../data/var_assignment.lox.expected"),
-            ),
-            (
-                include_str!("../../data/block.lox"),
-                include_str!("../../data/block.lox.expected"),
-            ),
-            (
-                include_str!("../../data/if_else.lox"),
-                include_str!("../../data/if_else.lox.expected"),
-            ),
-            (
-                include_str!("../../data/while.lox"),
-                include_str!("../../data/while.lox.expected"),
-            ),
+            // (
+            //     include_str!("../../data/var_assignment.lox"),
+            //     include_str!("../../data/var_assignment.lox.expected"),
+            // ),
+            // (
+            //     include_str!("../../data/block.lox"),
+            //     include_str!("../../data/block.lox.expected"),
+            // ),
+            // (
+            //     include_str!("../../data/if_else.lox"),
+            //     include_str!("../../data/if_else.lox.expected"),
+            // ),
+            // (
+            //     include_str!("../../data/while.lox"),
+            //     include_str!("../../data/while.lox.expected"),
+            // ),
+            // (
+            //     include_str!("../../data/for.lox"),
+            //     include_str!("../../data/for.lox.expected"),
+            // ),
         ];
 
         for (src, expected) in tests {

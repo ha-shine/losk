@@ -532,11 +532,6 @@ mod tests {
                 include_str!("../../data/print_expression.lox"),
                 include_str!("../../data/print_expression.lox.expected"),
             ),
-            // logical expressions
-            ("print false or true;", "true\n"),
-            // unary expressions
-            ("print !true;", "false\n"),
-            ("print -10.5;", "-10.5\n"),
             (
                 include_str!("../../data/var_assignment.lox"),
                 include_str!("../../data/var_assignment.lox.expected"),

@@ -122,7 +122,7 @@ impl<'a> Context<'a> {
         ParseRule(None, None, Precedence::None),                 // Semicolon
         ParseRule(None, Some(Self::binary), Precedence::Factor), // Slash
         ParseRule(None, Some(Self::binary), Precedence::Factor), // Star
-        ParseRule(None, None, Precedence::None),                 // Bang
+        ParseRule(Some(Self::unary), None, Precedence::None),    // Bang
         ParseRule(None, Some(Self::binary), Precedence::Equality), // BangEqual
         ParseRule(None, None, Precedence::None),                 // Equal
         ParseRule(None, Some(Self::binary), Precedence::Equality), // EqualEqual
@@ -218,6 +218,8 @@ impl<'a> Context<'a> {
             self.if_statement()?;
         } else if self.match_type(Type::While) {
             self.while_statement()?;
+        } else if self.match_type(Type::For) {
+            self.for_statement()?;
         } else if self.match_type(Type::LeftBrace) {
             self.begin_scope();
             self.block()?;
@@ -287,6 +289,77 @@ impl<'a> Context<'a> {
         self.chunk.patch_jump(exit_jump);
         line = self.prev.as_ref().unwrap().line;
         self.chunk.add_instruction(Instruction::Pop, line);
+
+        Ok(())
+    }
+
+    fn for_statement(&mut self) -> CompilerResult<()> {
+        // The for variable is scoped to the body, so a new scope is created.
+        self.begin_scope();
+        self.consume(Type::LeftParen, "Expect '(' after 'for'.")?;
+
+        // The first part, initialization statement.
+        if self.match_type(Type::SemiColon) {
+            // No initializer
+        } else if self.match_type(Type::Var) {
+            self.var_declaration()?;
+        } else {
+            self.expression_statement()?;
+        }
+
+        // The second part, where the condition is tested before running the block.
+        let mut loop_start = self.chunk.in_count();
+        let mut exit_jump = None;
+        if !self.match_type(Type::SemiColon) {
+            self.expression()?;
+            let line = self.consume(Type::SemiColon, "Expect ';' after loop condition.")?;
+
+            // This jump will be patched to skip the block if the condition is false.
+            exit_jump = Some(
+                self.chunk
+                    .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line),
+            );
+            self.chunk.add_instruction(Instruction::Pop, line); // pop the condition
+        }
+
+        // The third part, incrementing the variable (or any expression statement - without ";").
+        // This will be run after every block.
+        if !self.match_type(Type::RightParen) {
+            let mut line = self.prev.as_ref().unwrap().line;
+            let body_jump = self
+                .chunk
+                .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+            let increment_start = self.chunk.in_count();
+            self.expression()?;
+            line = self.prev.as_ref().unwrap().line;
+            self.chunk.add_instruction(Instruction::Pop, line);
+            self.consume(Type::RightParen, "Expect ')' after for clauses.")?;
+
+            // After incrementing the variable, loop back to the start - which is the condition
+            // testing instruction.
+            line = self.prev.as_ref().unwrap().line;
+            self.emit_loop(loop_start, line);
+
+            // The block is set to be looped back to the start - which normally is testing condition.
+            // But if there's incrementing statement, it should be ran first before test condition.
+            // It's achieved here by overriding the loop start index.
+            loop_start = increment_start;
+
+            // `body_jump` was emitted before the increment part, so essentially this is jumping
+            // in this direction: test-condition -> block
+            self.chunk.patch_jump(body_jump);
+        }
+
+        // The block start
+        self.statement()?;
+        self.emit_loop(loop_start, self.prev.as_ref().unwrap().line);
+        self.end_scope();
+
+        if let Some(dist) = exit_jump {
+            self.chunk.patch_jump(dist);
+            self.chunk
+                .add_instruction(Instruction::Pop, self.prev.as_ref().unwrap().line);
+        }
 
         Ok(())
     }
@@ -711,7 +784,7 @@ impl<'a> Context<'a> {
                 | Type::Return => {
                     return;
                 }
-                _ => {}
+                _ => self.advance(),
             }
         }
     }
