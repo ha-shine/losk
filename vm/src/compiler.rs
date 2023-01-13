@@ -1,6 +1,6 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::{CompilerResult, Error};
-use crate::instruction::{Constant, StackOffset};
+use crate::instruction::{Constant, JumpDist, StackOffset};
 use crate::value::Value;
 use losk_core::{Token, TokenStream, Type};
 
@@ -133,7 +133,7 @@ impl<'a> Context<'a> {
         ParseRule(Some(Self::variable), None, Precedence::None), // Identifier
         ParseRule(Some(Self::string), None, Precedence::None),   // String
         ParseRule(Some(Self::number), None, Precedence::None),   // Number
-        ParseRule(None, None, Precedence::None),                 // And
+        ParseRule(None, Some(Self::and), Precedence::And),       // And
         ParseRule(None, None, Precedence::None),                 // Class
         ParseRule(None, None, Precedence::None),                 // Else
         ParseRule(Some(Self::literal), None, Precedence::None),  // True
@@ -142,7 +142,7 @@ impl<'a> Context<'a> {
         ParseRule(None, None, Precedence::None),                 // Fun
         ParseRule(None, None, Precedence::None),                 // If
         ParseRule(Some(Self::literal), None, Precedence::None),  // Nil
-        ParseRule(None, None, Precedence::None),                 // Or
+        ParseRule(None, Some(Self::or), Precedence::Or),         // Or
         ParseRule(None, None, Precedence::None),                 // Print
         ParseRule(None, None, Precedence::None),                 // Return
         ParseRule(None, None, Precedence::None),                 // Super
@@ -214,6 +214,10 @@ impl<'a> Context<'a> {
     fn statement(&mut self) -> CompilerResult<()> {
         if self.match_type(Type::Print) {
             self.print_statement()?;
+        } else if self.match_type(Type::If) {
+            self.if_statement()?;
+        } else if self.match_type(Type::While) {
+            self.while_statement()?;
         } else if self.match_type(Type::LeftBrace) {
             self.begin_scope();
             self.block()?;
@@ -221,6 +225,7 @@ impl<'a> Context<'a> {
         } else {
             self.expression_statement()?;
         }
+
         Ok(())
     }
 
@@ -228,6 +233,61 @@ impl<'a> Context<'a> {
         self.expression()?;
         let line = self.consume(Type::SemiColon, "Expect ';' after value.")?;
         self.chunk.add_instruction(Instruction::Print, line);
+        Ok(())
+    }
+
+    fn if_statement(&mut self) -> CompilerResult<()> {
+        self.consume(Type::LeftParen, "Expect '(' after 'if'.")?;
+        self.expression()?;
+        let mut line = self.consume(Type::RightParen, "Expect ')' after condition.")?;
+
+        let then_jump = self
+            .chunk
+            .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        self.chunk.add_instruction(Instruction::Pop, line);
+        self.statement()?;
+
+        line = self.prev.as_ref().unwrap().line;
+        let else_jump = self
+            .chunk
+            .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+
+        // Patching jump, here the if statement has been parsed and the program will jump to this
+        // place if the test condition is false. In short,
+        // then_jump = jump over the "then" statements after "if" when the condition is false
+        // else_jump = jump over the "else" statements after executing if statements
+        self.chunk.patch_jump(then_jump);
+        self.chunk.add_instruction(Instruction::Pop, line);
+
+        if self.match_type(Type::Else) {
+            self.statement()?;
+        }
+
+        // Need another jump patching here because without this patch, the if statement would just
+        // fall through into else clause.
+        self.chunk.patch_jump(else_jump);
+        Ok(())
+    }
+
+    fn while_statement(&mut self) -> CompilerResult<()> {
+        let loop_start = self.chunk.in_count();
+        self.consume(Type::LeftParen, "Expect '(' after while.")?;
+        self.expression()?;
+        self.consume(Type::RightParen, "Expect ')' after condition.")?;
+
+        let mut line = self.prev.as_ref().unwrap().line;
+        let exit_jump = self
+            .chunk
+            .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        self.chunk.add_instruction(Instruction::Pop, line);
+        self.statement()?;
+
+        line = self.prev.as_ref().unwrap().line;
+        self.emit_loop(loop_start, line);
+        self.chunk.patch_jump(exit_jump);
+        line = self.prev.as_ref().unwrap().line;
+        self.chunk.add_instruction(Instruction::Pop, line);
+
         Ok(())
     }
 
@@ -268,8 +328,12 @@ impl<'a> Context<'a> {
         self.parse_precedence(Precedence::Unary)?;
 
         match ty {
-            Type::Minus => self.chunk.add_instruction(Instruction::Negate, line),
-            Type::Bang => self.chunk.add_instruction(Instruction::Not, line),
+            Type::Minus => {
+                self.chunk.add_instruction(Instruction::Negate, line);
+            }
+            Type::Bang => {
+                self.chunk.add_instruction(Instruction::Not, line);
+            }
             _ => panic!("Unreachable"),
         }
 
@@ -290,21 +354,35 @@ impl<'a> Context<'a> {
         self.parse_precedence(rule.precedence().next())?;
 
         match ty {
-            Type::Plus => self.chunk.add_instruction(Instruction::Add, line),
-            Type::Minus => self.chunk.add_instruction(Instruction::Subtract, line),
-            Type::Star => self.chunk.add_instruction(Instruction::Multiply, line),
-            Type::Slash => self.chunk.add_instruction(Instruction::Divide, line),
+            Type::Plus => {
+                self.chunk.add_instruction(Instruction::Add, line);
+            }
+            Type::Minus => {
+                self.chunk.add_instruction(Instruction::Subtract, line);
+            }
+            Type::Star => {
+                self.chunk.add_instruction(Instruction::Multiply, line);
+            }
+            Type::Slash => {
+                self.chunk.add_instruction(Instruction::Divide, line);
+            }
             Type::BangEqual => {
                 self.chunk.add_instruction(Instruction::Equal, line);
                 self.chunk.add_instruction(Instruction::Not, line);
             }
-            Type::EqualEqual => self.chunk.add_instruction(Instruction::Equal, line),
-            Type::Greater => self.chunk.add_instruction(Instruction::Greater, line),
+            Type::EqualEqual => {
+                self.chunk.add_instruction(Instruction::Equal, line);
+            }
+            Type::Greater => {
+                self.chunk.add_instruction(Instruction::Greater, line);
+            }
             Type::GreaterEqual => {
                 self.chunk.add_instruction(Instruction::Less, line);
                 self.chunk.add_instruction(Instruction::Not, line);
             }
-            Type::Less => self.chunk.add_instruction(Instruction::Less, line),
+            Type::Less => {
+                self.chunk.add_instruction(Instruction::Less, line);
+            }
             Type::LessEqual => {
                 self.chunk.add_instruction(Instruction::Greater, line);
                 self.chunk.add_instruction(Instruction::Not, line);
@@ -315,18 +393,53 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    // When this is called, the left-hand side expression has already been compiled. If that value
+    // is false, leave that value on the stack and skip the whole expression. If not, pop that
+    // value from the stack and evaluate the next expression.
+    fn and(&mut self, _: bool) -> CompilerResult<()> {
+        let line = self.prev.as_ref().unwrap().line;
+        let end_jump = self
+            .chunk
+            .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+        self.chunk.add_instruction(Instruction::Pop, line);
+        self.parse_precedence(Precedence::And)?;
+        self.chunk.patch_jump(end_jump);
+        Ok(())
+    }
+
+    // For else, if the value is false, pop the value and continue with the next expression (here
+    // the next expression starts after the unconditional jump that skips to the next instruction
+    // after the or expression which is taken when the value is true).
+    fn or(&mut self, _: bool) -> CompilerResult<()> {
+        let line = self.prev.as_ref().unwrap().line;
+        let else_jump = self
+            .chunk
+            .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        let end_jump = self
+            .chunk
+            .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+        self.chunk.patch_jump(else_jump);
+        self.chunk.add_instruction(Instruction::Pop, line);
+        self.parse_precedence(Precedence::Or)?;
+        self.chunk.patch_jump(end_jump);
+        Ok(())
+    }
+
     fn literal(&mut self, _: bool) -> CompilerResult<()> {
         let prev = self.prev.as_ref().unwrap();
         match prev.ty {
-            Type::True => self
-                .chunk
-                .add_instruction(Instruction::LiteralTrue, prev.line),
-            Type::False => self
-                .chunk
-                .add_instruction(Instruction::LiteralFalse, prev.line),
-            Type::Nil => self
-                .chunk
-                .add_instruction(Instruction::LiteralNil, prev.line),
+            Type::True => {
+                self.chunk
+                    .add_instruction(Instruction::LiteralTrue, prev.line);
+            }
+            Type::False => {
+                self.chunk
+                    .add_instruction(Instruction::LiteralFalse, prev.line);
+            }
+            Type::Nil => {
+                self.chunk
+                    .add_instruction(Instruction::LiteralNil, prev.line);
+            }
             _ => panic!("Unreachable"),
         }
 
@@ -555,6 +668,12 @@ impl<'a> Context<'a> {
             self.advance();
             true
         }
+    }
+
+    fn emit_loop(&mut self, start: usize, line: usize) {
+        let dist = self.chunk.in_count() - start;
+        self.chunk
+            .add_instruction(Instruction::Loop(JumpDist { dist }), line);
     }
 
     fn check(&self, ty: Type) -> bool {

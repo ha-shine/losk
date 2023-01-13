@@ -1,6 +1,6 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
-use crate::instruction::{Constant, StackOffset};
+use crate::instruction::{Constant, JumpDist, StackOffset};
 use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
@@ -224,6 +224,32 @@ impl VM {
                 Instruction::Print => {
                     let val = self.pop();
                     writeln!(self.stdout.borrow_mut(), "{}", val).unwrap();
+                }
+                Instruction::JumpIfFalse(JumpDist { dist }) => {
+                    // The pointer has already been incremented by 1 before this match statement,
+                    // so need to subtract 1 from jump distance.
+                    match self.peek() {
+                        StackValue::Bool(val) => {
+                            if !val {
+                                self.ip += dist - 1;
+                            }
+                        }
+                        _ => {
+                            return Err(Error::runtime(
+                                *self.chunk.get_line(self.ip - 1).unwrap(),
+                                "Expect test condition to be boolean.",
+                            ))
+                        }
+                    }
+                }
+                Instruction::Jump(JumpDist { dist }) => {
+                    // Same ordeal as above here.
+                    self.ip += dist - 1;
+                }
+                Instruction::Loop(JumpDist { dist }) => {
+                    // Add 1 to distance because the instruction pointer has already been incremented
+                    // by 1, so it's pointing to the instruction one after this.
+                    self.ip -= dist + 1;
                 }
                 Instruction::Return => {
                     self.pop();
@@ -472,6 +498,14 @@ mod tests {
             (
                 include_str!("../../data/block.lox"),
                 include_str!("../../data/block.lox.expected"),
+            ),
+            (
+                include_str!("../../data/if_else.lox"),
+                include_str!("../../data/if_else.lox.expected"),
+            ),
+            (
+                include_str!("../../data/while.lox"),
+                include_str!("../../data/while.lox.expected"),
             ),
         ];
 

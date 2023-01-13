@@ -1,4 +1,4 @@
-use crate::instruction::{Constant, StackOffset};
+use crate::instruction::{Constant, JumpDist, StackOffset};
 use crate::value::Value;
 
 // These instructions need to be able to turn into opcodes (format unknown yet.)
@@ -31,6 +31,9 @@ pub(crate) enum Instruction {
     Not,
     Negate,
     Print,
+    JumpIfFalse(JumpDist),
+    Jump(JumpDist),
+    Loop(JumpDist),
     Return,
 }
 
@@ -50,9 +53,14 @@ impl Chunk {
         }
     }
 
-    pub(crate) fn add_instruction(&mut self, instruction: Instruction, line_number: usize) {
+    pub(crate) fn add_instruction(
+        &mut self,
+        instruction: Instruction,
+        line_number: usize,
+    ) -> usize {
         self.instructions.push(instruction);
         self.line_numbers.push(line_number);
+        self.instructions.len() - 1
     }
 
     pub(crate) fn make_constant(&mut self, value: Value) -> Result<Constant, &'static str> {
@@ -64,6 +72,23 @@ impl Chunk {
 
         let index = (self.constants.len() as u8) - 1;
         Ok(Constant { index })
+    }
+
+    pub(crate) fn patch_jump(&mut self, index: usize) {
+        let jump = self.instructions.len() - index;
+        match self.instructions.get_mut(index) {
+            Some(Instruction::JumpIfFalse(JumpDist { dist })) => {
+                *dist = jump;
+            }
+            Some(Instruction::Jump(JumpDist { dist })) => {
+                *dist = jump;
+            }
+            _ => panic!("Unreachable!"),
+        }
+    }
+
+    pub(crate) fn in_count(&self) -> usize {
+        self.instructions.len()
     }
 
     pub(crate) fn get_line(&self, offset: usize) -> Option<&usize> {
