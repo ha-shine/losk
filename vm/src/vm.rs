@@ -1,6 +1,7 @@
 use crate::chunk::{Chunk, Instruction};
 use crate::error::Error;
 use crate::instruction::{Constant, JumpDist, StackOffset};
+use crate::object::Function;
 use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
@@ -9,9 +10,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
+const FRAMES_MAX: usize = 256;
 
 #[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq)]
@@ -50,21 +53,22 @@ impl Debug for StackValue {
 }
 
 #[allow(dead_code)]
-#[derive(PartialEq)]
-pub(crate) enum HeapValue {
+enum HeapValue {
     Str(String),
+    Fun(Function),
 }
 
 impl Display for HeapValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             HeapValue::Str(val) => write!(f, "{}", val),
+            HeapValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
         }
     }
 }
 
 #[allow(dead_code)]
-pub(crate) struct Object {
+struct Object {
     link: LinkedListLink,
     value: HeapValue,
 }
@@ -80,9 +84,57 @@ impl Object {
     }
 }
 
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        self.value.eq(&other.value)
+// CallFrame represents a frame of function that is pushed onto the call stack everytime a function
+// is called. This keeps an offset of value stack pointer in `slots` which marks the start of
+// this call and every value this frame owns needs to be referenced using index `slots + offset`.
+// Copy-derived to initialise an array of frames with default values when the VM starts.
+#[derive(Copy, Clone)]
+struct CallFrame {
+    // Unsafe pointer is used for performance, but the actual function will reside in the VM's
+    // main function
+    fun: UnsafeRef<Function>,
+
+    ip: usize,
+    slots: usize,
+}
+
+impl Deref for CallFrame {
+    type Target = Function;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fun
+    }
+}
+
+impl DerefMut for CallFrame {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.fun
+    }
+}
+
+impl CallFrame {
+    fn next(&mut self) -> Option<&Instruction> {
+        let result = self.fun.chunk.get_instruction(self.ip);
+        self.ip += 1;
+        result
+    }
+
+    fn jump(&mut self, offset: usize) {
+        self.ip += offset;
+    }
+
+    fn loop_(&mut self, offset: usize) {
+        self.ip -= offset;
+    }
+}
+
+impl Default for CallFrame {
+    fn default() -> Self {
+        CallFrame {
+            fun: UnsafeRef::empty(),
+            ip: 0,
+            slots: 0,
+        }
     }
 }
 
@@ -99,14 +151,20 @@ pub(crate) struct VM {
     // List of objects currently allocated on the heap
     objects: LinkedList<ListAdapter>,
 
-    // Probably would be better to use a context object for compiling, so I dun have to pass
-    // the chunk around, or take ownership of it in the VM. But currently, creating a VM entails
+    // Probably would be better to use a context object for compilation, so I dun have to pass
+    // the function around, or take ownership of it in the VM. But currently, creating a VM entails
     // creating a new stack as the most heavy operation so it's not a big deal yet.
     // As the initialisation task gets heavier, the scale will start tipping more to reusing
     // existing VM and resetting the stack (and ip) after runtime errors.
     // Also it would be cool to support some sort of debugger, where the user can walk the chunk
     // instructions as the VM executes them.
-    chunk: Chunk,
+    main: Function,
+
+    // The call frame is limited and is allocated on the rust stack for faster access compared to
+    // a heap. This comes with limitation that the frame count will be limited and pre-allocation
+    // when the VM starts.
+    frames: [CallFrame; FRAMES_MAX],
+    frame_count: usize,
 
     // Globals are used to map between a variable defined on the global scope to it's corresponding
     // value. The values are of type `StackValue` because the globals can be mapped to either stack
@@ -128,12 +186,21 @@ type OpResult = Result<StackOrHeap, &'static str>;
 
 #[allow(dead_code)]
 impl VM {
-    pub(crate) fn new(stdout: Rc<RefCell<dyn Write>>, chunk: Chunk) -> Self {
+    pub(crate) fn new(stdout: Rc<RefCell<dyn Write>>, main: Function) -> Self {
+        let mut frames = [Default::default(); 256];
+        frames[0] = CallFrame {
+            fun: UnsafeRef::new(&main),
+            ip: 0,
+            slots: 0,
+        };
+
         VM {
             ip: 0,
             stack: Vec::with_capacity(DEFAULT_STACK),
             objects: LinkedList::new(ListAdapter::new()),
-            chunk,
+            main,
+            frames,
+            frame_count: 1,
             globals: HashMap::new(),
             stdout,
         }
@@ -146,8 +213,10 @@ impl VM {
 
     fn run(&mut self) -> VmResult<()> {
         loop {
-            let instruction = match self.chunk.get_instruction(self.ip) {
-                Some(instruction) => instruction,
+            // Instruction is cheap to copy, though the run loop is very sensitive to performance
+            // and not sure this would affect the runtime severely.
+            let instruction = match self.current_frame_mut().next() {
+                Some(instruction) => *instruction,
                 None => return Ok(()),
             };
 
@@ -156,14 +225,8 @@ impl VM {
                 writeln!(self.stdout.borrow_mut(), "[ {:10?} ]", val).unwrap();
             }
 
-            // TODO: Disassemble this instruction if DEBUG_TRACE_EXECUTION is defined. But I guess
-            //   I don't need it here because the instructions are already disassembled into
-            //   `Instruction` object. Maybe the textbook will not do the disassembling ahead of
-            //   time and operate on a byte stream?
-            self.ip += 1;
-
             match instruction {
-                Instruction::Constant(val) => self.execute_constant(*val)?,
+                Instruction::Constant(val) => self.execute_constant(val)?,
                 Instruction::LiteralTrue => self.push(StackValue::Bool(true)),
                 Instruction::LiteralFalse => self.push(StackValue::Bool(false)),
                 Instruction::LiteralNil => self.push(StackValue::Nil),
@@ -171,10 +234,10 @@ impl VM {
                     self.pop();
                 }
                 Instruction::PopN(n) => {
-                    self.pop_n(*n);
+                    self.pop_n(n);
                 }
                 Instruction::GetGlobal(Constant { index }) => {
-                    let name = match self.chunk.get_constant(*index as usize) {
+                    let name = match self.current_frame().chunk.get_constant(index as usize) {
                         Some(Value::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -183,7 +246,7 @@ impl VM {
                         Some(sval) => self.push(*sval),
                         None => {
                             return Err(Error::runtime(
-                                *self.chunk.get_line(self.ip - 1).unwrap(),
+                                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
                                 &format!("Undefined variable '{}'.", name),
                             ))
                         }
@@ -192,7 +255,7 @@ impl VM {
                 Instruction::DefineGlobal(Constant { index }) => {
                     // The global name is stored as a constant value in the constant pool, read
                     // from the pool to get the name.
-                    let name = match self.chunk.get_constant(*index as usize) {
+                    let name = match self.current_frame().chunk.get_constant(index as usize) {
                         Some(Value::Str(val)) => val.clone(),
                         _ => panic!("Unreachable"),
                     };
@@ -200,13 +263,13 @@ impl VM {
                     let val = self.pop();
                     self.globals.insert(name.clone(), val);
                 }
-                Instruction::SetGlobal(val) => self.execute_set_global(*val)?,
+                Instruction::SetGlobal(val) => self.execute_set_global(val)?,
                 Instruction::GetLocal(StackOffset { index }) => {
-                    let val = self.stack[*index as usize];
+                    let val = self.stack[index as usize];
                     self.push(val);
                 }
                 Instruction::SetLocal(StackOffset { index }) => {
-                    self.stack[*index as usize] = *self.stack.last().unwrap();
+                    self.stack[index as usize] = *self.stack.last().unwrap();
                 }
                 Instruction::Equal => {
                     let rhs = self.pop();
@@ -231,12 +294,12 @@ impl VM {
                     match self.peek() {
                         StackValue::Bool(val) => {
                             if !val {
-                                self.ip += dist - 1;
+                                self.current_frame_mut().jump(dist - 1)
                             }
                         }
                         _ => {
                             return Err(Error::runtime(
-                                *self.chunk.get_line(self.ip - 1).unwrap(),
+                                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
                                 "Expect test condition to be boolean.",
                             ))
                         }
@@ -244,12 +307,12 @@ impl VM {
                 }
                 Instruction::Jump(JumpDist { dist }) => {
                     // Same ordeal as above here.
-                    self.ip += dist - 1;
+                    self.current_frame_mut().jump(dist - 1)
                 }
                 Instruction::Loop(JumpDist { dist }) => {
                     // Add 1 to distance because the instruction pointer has already been incremented
                     // by 1, so it's pointing to the instruction one after this.
-                    self.ip -= dist + 1;
+                    self.current_frame_mut().loop_(dist + 1)
                 }
                 Instruction::Return => {
                     self.pop();
@@ -262,31 +325,39 @@ impl VM {
         // Note that the set variable doesn't pop the value from the stack because the set assignment
         // is an expression statement and there always is a pop instruction after expression statement.
         let val = *self.peek();
-        let name = match self.chunk.get_constant(constant.index as usize) {
-            Some(Value::Str(name)) => name,
+
+        // It's a bit wasteful to clone the constant name everytime it's assigned, but I want to
+        // avoid unsafe code in this before profiling.
+        let name = match self
+            .current_frame()
+            .chunk
+            .get_constant(constant.index as usize)
+        {
+            Some(Value::Str(name)) => name.clone(),
             _ => panic!("Unreachable"),
         };
 
-        match self.globals.get_mut(name) {
+        match self.globals.get_mut(&name) {
             Some(entry) => {
                 *entry = val;
                 Ok(())
             }
             None => Err(Error::runtime(
-                *self.chunk.get_line(self.ip - 1).unwrap(),
+                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
                 &format!("Undefined variable '{}'.", name),
             )),
         }
     }
 
     fn execute_constant(&mut self, con: Constant) -> VmResult<()> {
-        let constant =
-            self.chunk
-                .get_constant(con.index as usize)
-                .ok_or_else(|| Error::RuntimeError {
-                    line: *self.chunk.get_line(self.ip - 1).unwrap(),
-                    msg: String::from(""),
-                })?;
+        let constant = self
+            .current_frame()
+            .chunk
+            .get_constant(con.index as usize)
+            .ok_or_else(|| Error::RuntimeError {
+                line: *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
+                msg: String::from(""),
+            })?;
         match constant {
             Value::Double(val) => self.push(StackValue::Num(*val)),
             Value::Bool(val) => self.push(StackValue::Bool(*val)),
@@ -323,7 +394,7 @@ impl VM {
                 Ok(())
             }
             Err(msg) => Err(Error::runtime(
-                *self.chunk.get_line(self.ip - 1).unwrap(),
+                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
                 msg,
             )),
         }
@@ -419,7 +490,7 @@ impl VM {
     }
 
     fn get_line(&self) -> usize {
-        *self.chunk.get_line(self.ip).unwrap()
+        *self.current_frame().chunk.get_line(self.ip).unwrap()
     }
 
     fn push(&mut self, val: StackValue) {
@@ -446,6 +517,14 @@ impl VM {
         self.objects.push_front(hval);
         self.stack.push(sval);
     }
+
+    fn current_frame(&self) -> &CallFrame {
+        &self.frames[self.frame_count - 1]
+    }
+
+    fn current_frame_mut(&mut self) -> &mut CallFrame {
+        &mut self.frames[self.frame_count - 1]
+    }
 }
 
 #[cfg(test)]
@@ -463,10 +542,10 @@ mod tests {
 
         let mut scanner = Scanner::new();
         let compiler = Compiler::new();
-        let chunk = compiler.compile(scanner.scan_tokens(src)).unwrap();
+        let fun = compiler.compile(scanner.scan_tokens(src)).unwrap();
         let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
 
-        let mut vm = VM::new(output.clone(), chunk);
+        let mut vm = VM::new(output.clone(), fun);
         let result = vm.run();
 
         match (result, err) {
@@ -491,26 +570,26 @@ mod tests {
                 include_str!("../../data/print_expression.lox"),
                 include_str!("../../data/print_expression.lox.expected"),
             ),
-            // (
-            //     include_str!("../../data/var_assignment.lox"),
-            //     include_str!("../../data/var_assignment.lox.expected"),
-            // ),
-            // (
-            //     include_str!("../../data/block.lox"),
-            //     include_str!("../../data/block.lox.expected"),
-            // ),
-            // (
-            //     include_str!("../../data/if_else.lox"),
-            //     include_str!("../../data/if_else.lox.expected"),
-            // ),
-            // (
-            //     include_str!("../../data/while.lox"),
-            //     include_str!("../../data/while.lox.expected"),
-            // ),
-            // (
-            //     include_str!("../../data/for.lox"),
-            //     include_str!("../../data/for.lox.expected"),
-            // ),
+            (
+                include_str!("../../data/var_assignment.lox"),
+                include_str!("../../data/var_assignment.lox.expected"),
+            ),
+            (
+                include_str!("../../data/block.lox"),
+                include_str!("../../data/block.lox.expected"),
+            ),
+            (
+                include_str!("../../data/if_else.lox"),
+                include_str!("../../data/if_else.lox.expected"),
+            ),
+            (
+                include_str!("../../data/while.lox"),
+                include_str!("../../data/while.lox.expected"),
+            ),
+            (
+                include_str!("../../data/for.lox"),
+                include_str!("../../data/for.lox.expected"),
+            ),
         ];
 
         for (src, expected) in tests {

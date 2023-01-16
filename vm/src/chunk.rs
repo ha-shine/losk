@@ -8,7 +8,7 @@ use crate::value::Value;
 //
 // The chunk object also needs another integer array to store the line number of the source location
 // where the instruction comes from.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) enum Instruction {
     Constant(Constant),
     LiteralTrue,
