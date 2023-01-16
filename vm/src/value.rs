@@ -1,3 +1,4 @@
+use crate::object::Function;
 use losk_core::Literal;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
@@ -10,6 +11,7 @@ pub(crate) enum Value {
     Double(f64),
     Bool(bool),
     Str(String),
+    Fun(Function),
     Nil,
 }
 
@@ -39,6 +41,7 @@ impl Display for Value {
             Value::Double(val) => write!(f, "{}", val),
             Value::Bool(val) => write!(f, "{}", val),
             Value::Str(val) => write!(f, "{}", val),
+            Value::Fun(fun) => write!(f, "<Function {}>", fun.name),
             Value::Nil => write!(f, "nil"),
         }
     }

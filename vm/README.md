@@ -2,6 +2,9 @@
 
 - [ ] Write a disassembler that will print offset and opcodes. Not sure how this will be useful yet. The disassembler
       should print the codes in this format `<offset> <line_number/'|' if same line as previous> <instruction>`.
+- [ ] Currently, function parsing is a bit weird in a way that synchronisation is not skipped to the end of the block
+      if an error is found, but the parsing stop in the middle of the function. Try parsing an error function and see
+      if the synchronisation makes sense.
 
 # Challenges
 

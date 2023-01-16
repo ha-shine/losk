@@ -37,7 +37,7 @@ pub(crate) enum Instruction {
     Return,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chunk {
     instructions: Vec<Instruction>,
     line_numbers: Vec<usize>,

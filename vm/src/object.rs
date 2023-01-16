@@ -1,5 +1,6 @@
 use crate::chunk::Chunk;
 
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Function {
     pub(crate) name: String,
     pub(crate) arity: usize,

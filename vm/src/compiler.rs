@@ -1,4 +1,4 @@
-use crate::chunk::{Chunk, Instruction};
+use crate::chunk::Instruction;
 use crate::error::{CompilerResult, Error};
 use crate::instruction::{Constant, JumpDist, StackOffset};
 use crate::object::Function;
@@ -40,6 +40,12 @@ impl Precedence {
     }
 }
 
+#[derive(Copy, Clone)]
+enum FunctionType {
+    Script,
+    Function,
+}
+
 #[allow(dead_code)]
 impl Compiler {
     pub(crate) fn new() -> Self {
@@ -47,7 +53,7 @@ impl Compiler {
     }
 
     pub(crate) fn compile(&self, stream: TokenStream) -> Result<Function, Vec<Error>> {
-        let ctx = Context::compiled(stream);
+        let ctx = Context::compiled(stream, FunctionType::Script);
 
         if !ctx.errs.is_empty() {
             Err(ctx.errs)
@@ -70,7 +76,6 @@ struct Context<'a> {
     prev: Option<Token>,
 
     errs: Vec<Error>,
-    panic: bool,
 
     // locals are used to resolve the declared variables into a stack frame location. `scope_depth`
     // is an auxiliary data that is used in this task, by tracking which level of scope the compiler
@@ -80,6 +85,8 @@ struct Context<'a> {
     // be copied instead.
     locals: Vec<Local>,
     scope_depth: isize,
+
+    ftype: FunctionType,
 }
 
 type ParseFn<'a> = fn(&mut Context<'a>, bool) -> CompilerResult<()>;
@@ -153,10 +160,8 @@ impl<'a> Context<'a> {
         ParseRule(None, None, Precedence::None),                 // Error
     ];
 
-    // Instead of having this function inside the context, this context should be passed mutably through
-    // compiler's methods. This would make some of the multiple borrows restriction easier.
-    fn compiled(stream: TokenStream<'a>) -> Self {
-        let mut ctx = Context {
+    fn new(stream: TokenStream<'a>, ftype: FunctionType) -> Self {
+        Context {
             stream,
             fun: Function::new("<script>", 0),
 
@@ -164,17 +169,40 @@ impl<'a> Context<'a> {
             prev: None,
 
             errs: Vec::new(),
-            panic: false,
 
             locals: Vec::new(),
             scope_depth: 0,
-        };
 
+            ftype,
+        }
+    }
+
+    // Instead of having this function inside the context, this context should be passed mutably through
+    // compiler's methods. This would make some of the multiple borrows restriction easier.
+    fn compiled(stream: TokenStream<'a>, ftype: FunctionType) -> Self {
+        let mut ctx = Context::new(stream, ftype);
         ctx.compile();
         ctx
     }
 
     fn compile(&mut self) {
+        // If this is a function, the compiler doesn't need to parse until EOF. It's enough to
+        // parse just the function name, parameters, and the body
+        if let FunctionType::Function = self.ftype {
+            match self.compile_function() {
+                Ok(_) => {}
+                Err(err) => {
+                    self.errs.push(err);
+
+                    // The synchronize here should be synchronized until the end of the block?
+                    self.synchronize();
+                }
+            }
+            return;
+        }
+
+        // Only advance to next character if the function being parsed is a script because
+        // if function, the context needs access to previous token for naming the function.
         self.advance();
 
         // Maybe check the result at this level and do the synchronisation here?
@@ -189,9 +217,38 @@ impl<'a> Context<'a> {
         }
     }
 
+    fn compile_function(&mut self) -> CompilerResult<()> {
+        self.fun.name = self.prev.as_ref().unwrap().lexeme.clone();
+
+        self.begin_scope();
+        self.consume(Type::LeftParen, "Expect '(' after function name.")?;
+        if !self.check(Type::RightParen) {
+            loop {
+                self.fun.arity += 1;
+                if self.fun.arity > 255 {
+                    return Err(self.error("Can't have more than 255 parameters."));
+                }
+
+                let constant = self.parse_variable("Expect parameter name")?;
+                self.define_variable(constant, self.prev.as_ref().unwrap().line);
+
+                if !self.match_type(Type::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(Type::RightParen, "Expect ')' after function parameters.")?;
+        self.consume(Type::LeftBrace, "Expect '{' before function boyd.")?;
+        self.block()?;
+        Ok(())
+    }
+
     fn declaration(&mut self) -> CompilerResult<()> {
         if self.match_type(Type::Var) {
             self.var_declaration()
+        } else if self.match_type(Type::Fun) {
+            self.fun_declaration()
         } else {
             self.statement()
         }
@@ -210,6 +267,14 @@ impl<'a> Context<'a> {
 
         let line = self.consume(Type::SemiColon, "Expect ';' after variable declaration.")?;
         self.define_variable(constant, line);
+        Ok(())
+    }
+
+    fn fun_declaration(&mut self) -> CompilerResult<()> {
+        let global = self.parse_variable("Expect function name")?;
+        self.mark_initialized();
+        self.function(FunctionType::Function)?;
+        self.define_variable(global, self.prev.as_ref().unwrap().line);
         Ok(())
     }
 
@@ -392,6 +457,37 @@ impl<'a> Context<'a> {
 
         self.consume(Type::RightBrace, "Expect '}' after block.")?;
         Ok(())
+    }
+
+    // To parse a function, a new context is created and do the compilation as usual. The main
+    // `compile` method will branch into the correct parsing method depending on the type.
+    fn function(&mut self, ftype: FunctionType) -> CompilerResult<()> {
+        let stream = std::mem::replace(&mut self.stream, TokenStream::new(""));
+        let mut fun_ctx = Self::new(stream, ftype);
+        fun_ctx.prev = self.prev.take();
+        fun_ctx.curr = self.curr.take();
+        fun_ctx.compile();
+
+        // Replace the stream again
+        let _ = std::mem::replace(&mut self.stream, fun_ctx.stream);
+        self.prev = fun_ctx.prev;
+        self.curr = fun_ctx.curr;
+
+        if !fun_ctx.errs.is_empty() {
+            self.errs.append(&mut fun_ctx.errs);
+            Err(self.error("Error while parsing function"))
+        } else {
+            let fun_const = self
+                .fun
+                .chunk
+                .make_constant(Value::Fun(fun_ctx.fun))
+                .unwrap();
+            self.fun.chunk.add_instruction(
+                Instruction::Constant(fun_const),
+                self.prev.as_ref().unwrap().line,
+            );
+            Ok(())
+        }
     }
 
     fn grouping(&mut self, _: bool) -> CompilerResult<()> {
@@ -710,6 +806,10 @@ impl<'a> Context<'a> {
     }
 
     fn mark_initialized(&mut self) {
+        if self.scope_depth == 0 {
+            return;
+        }
+
         self.locals.last_mut().unwrap().depth = self.scope_depth;
     }
 
@@ -784,8 +884,6 @@ impl<'a> Context<'a> {
     // Synchronize the token stream if an error is found during compilation, and the course of action
     // is to simply skip all tokens until the end of statement or the eof is found.
     fn synchronize(&mut self) {
-        self.panic = false;
-
         while self.curr.as_ref().unwrap().ty != Type::Eof {
             if let Type::SemiColon = self.prev.as_ref().unwrap().ty {
                 return;

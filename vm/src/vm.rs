@@ -360,10 +360,12 @@ impl VM {
                 line: *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
                 msg: String::from(""),
             })?;
+
         match constant {
             Value::Double(val) => self.push(StackValue::Num(*val)),
             Value::Bool(val) => self.push(StackValue::Bool(*val)),
             Value::Str(val) => self.allocate(HeapValue::Str(val.clone())),
+            Value::Fun(fun) => self.allocate(HeapValue::Fun(fun.clone())),
             Value::Nil => self.push(StackValue::Nil),
         }
         Ok(())
@@ -591,6 +593,10 @@ mod tests {
             (
                 include_str!("../../data/for.lox"),
                 include_str!("../../data/for.lox.expected"),
+            ),
+            (
+                include_str!("../../data/print_function.lox"),
+                include_str!("../../data/print_function.lox.expected"),
             ),
         ];
 
