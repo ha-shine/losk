@@ -40,7 +40,7 @@ impl Precedence {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq)]
 enum FunctionType {
     Script,
     Function,
@@ -188,9 +188,12 @@ impl<'a> Context<'a> {
     fn compile(&mut self) {
         // If this is a function, the compiler doesn't need to parse until EOF. It's enough to
         // parse just the function name, parameters, and the body
+        //
+        // The return functions are always emitted whether the parsed function does return or
+        // not. They will not be interpreted if the function return earlier anyway.
         if let FunctionType::Function = self.ftype {
             match self.compile_function() {
-                Ok(_) => {}
+                Ok(_) => self.add_return(),
                 Err(err) => {
                     self.errs.push(err);
 
@@ -215,6 +218,8 @@ impl<'a> Context<'a> {
                 }
             }
         }
+
+        self.add_return();
     }
 
     fn compile_function(&mut self) -> CompilerResult<()> {
@@ -281,6 +286,8 @@ impl<'a> Context<'a> {
             self.print_statement()?;
         } else if self.match_type(Type::If) {
             self.if_statement()?;
+        } else if self.match_type(Type::Return) {
+            self.return_statement()?;
         } else if self.match_type(Type::While) {
             self.while_statement()?;
         } else if self.match_type(Type::For) {
@@ -300,6 +307,22 @@ impl<'a> Context<'a> {
         self.expression()?;
         let line = self.consume(Type::SemiColon, "Expect ';' after value.")?;
         self.add_instruction_from(Instruction::Print, line);
+        Ok(())
+    }
+
+    fn return_statement(&mut self) -> CompilerResult<()> {
+        if self.ftype == FunctionType::Script {
+            return Err(self.error("Can't return from top-level code."));
+        }
+
+        if self.match_type(Type::SemiColon) {
+            self.add_return();
+        } else {
+            self.expression()?;
+            self.consume(Type::SemiColon, "Expect ';' after return value.")?;
+            self.add_instruction(Instruction::Return);
+        }
+
         Ok(())
     }
 
@@ -811,6 +834,11 @@ impl<'a> Context<'a> {
         if n > 0 {
             self.add_instruction(Instruction::PopN(n));
         }
+    }
+
+    fn add_return(&mut self) {
+        self.add_instruction(Instruction::LiteralNil);
+        self.add_instruction(Instruction::Return);
     }
 
     fn add_instruction(&mut self, instruction: Instruction) -> usize {

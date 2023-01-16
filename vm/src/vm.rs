@@ -32,7 +32,7 @@ enum StackValue {
 }
 
 impl Display for StackValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
@@ -54,6 +54,7 @@ impl Debug for StackValue {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 enum HeapValue {
     Str(String),
     Fun(Function),
@@ -69,6 +70,7 @@ impl Display for HeapValue {
 }
 
 #[allow(dead_code)]
+#[derive(Debug)]
 struct Object {
     link: LinkedListLink,
     value: HeapValue,
@@ -152,15 +154,6 @@ pub(crate) struct VM {
     // List of objects currently allocated on the heap
     objects: LinkedList<ListAdapter>,
 
-    // Probably would be better to use a context object for compilation, so I dun have to pass
-    // the function around, or take ownership of it in the VM. But currently, creating a VM entails
-    // creating a new stack as the most heavy operation so it's not a big deal yet.
-    // As the initialisation task gets heavier, the scale will start tipping more to reusing
-    // existing VM and resetting the stack (and ip) after runtime errors.
-    // Also it would be cool to support some sort of debugger, where the user can walk the chunk
-    // instructions as the VM executes them.
-    main: Function,
-
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
     // when the VM starts.
@@ -188,18 +181,33 @@ type OpResult = Result<StackOrHeap, &'static str>;
 #[allow(dead_code)]
 impl VM {
     pub(crate) fn new(stdout: Rc<RefCell<dyn Write>>, main: Function) -> Self {
+        let main = Object::new(HeapValue::Fun(main));
+        let mut objects = LinkedList::new(ListAdapter::new());
+        objects.push_front(main);
+
+        // The main function needs to be pushed onto the objects first because doing that will
+        // send the object to the heap and the pointer created prior will be invalidated.
         let mut frames = [Default::default(); 256];
-        frames[0] = CallFrame {
-            fun: UnsafeRef::new(&main),
-            ip: 0,
-            slots: 0,
-        };
+        let mut stack = Vec::with_capacity(DEFAULT_STACK);
+        if let Some(obj) = objects.front().get() {
+            stack.push(StackValue::Obj(UnsafeRef::new(obj)));
+            if let HeapValue::Fun(fun) = &objects.front().get().unwrap().value {
+                frames[0] = CallFrame {
+                    fun: UnsafeRef::new(fun),
+                    ip: 0,
+                    slots: 0,
+                };
+            } else {
+                panic!("Unreachable")
+            }
+        } else {
+            panic!("Unreachable")
+        }
 
         VM {
             ip: 0,
-            stack: Vec::with_capacity(DEFAULT_STACK),
-            objects: LinkedList::new(ListAdapter::new()),
-            main,
+            stack,
+            objects,
             frames,
             frame_count: 1,
             globals: HashMap::new(),
@@ -262,15 +270,19 @@ impl VM {
                     self.globals.insert(name.clone(), val);
                 }
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
+
+                // Additional 1 is added because the stack[0] is the information for current
+                // call frame
                 Instruction::GetLocal(StackOffset { index }) => {
-                    let index = self.current_frame().slots + index as usize;
+                    let index = self.current_frame().slots + index as usize + 1;
                     let val = self.stack[index];
                     self.push(val);
                 }
                 Instruction::SetLocal(StackOffset { index }) => {
-                    let index = self.current_frame().slots + index as usize;
+                    let index = self.current_frame().slots + index as usize + 1;
                     self.stack[index] = *self.stack.last().unwrap();
                 }
+
                 Instruction::Equal => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -332,7 +344,7 @@ impl VM {
                             self.frames[self.frame_count] = CallFrame {
                                 fun: UnsafeRef::new(fun),
                                 ip: 0,
-                                slots: self.stack.len() - count,
+                                slots: self.stack.len() - count - 1,
                             };
                             self.frame_count += 1;
                         } else {
@@ -345,7 +357,21 @@ impl VM {
                     }
                 }
                 Instruction::Return => {
-                    self.pop();
+                    // The return value of a function should be on top of the stack, so it'll be
+                    // pushed onto the top of the stack.
+                    let result = self.pop();
+                    let slots = self.current_frame().slots;
+                    self.frame_count -= 1;
+                    if self.frame_count == 0 {
+                        self.pop();
+                        return Ok(());
+                    }
+
+                    // After calling a function, the stack top needs to point to the place where
+                    // the function information is stored previously (so frame.slots).
+                    // To get back there, I need to pop stack.len() - slots.
+                    self.pop_n(self.stack.len() - slots);
+                    self.push(result);
                 }
             }
         }
@@ -587,8 +613,8 @@ mod tests {
 
         match (result, err) {
             (Err(out @ Error::RuntimeError { .. }), Some(err)) => assert_eq!(err, out.to_string()),
-            (Err(Error::RuntimeError { msg, .. }), None) => {
-                panic!("Not expecting any error, found '{}'", msg)
+            (Err(out @ Error::RuntimeError { .. }), None) => {
+                panic!("Not expecting any error, found '{}'", out)
             }
             (Ok(_), Some(err)) => panic!("Expecting an error '{}', found none.", err),
             _ => {}
@@ -634,6 +660,14 @@ mod tests {
             (
                 include_str!("../../data/fun_no_return.lox"),
                 include_str!("../../data/fun_no_return.lox.expected"),
+            ),
+            (
+                include_str!("../../data/fun_nil_return_print.lox"),
+                include_str!("../../data/fun_nil_return_print.lox.expected"),
+            ),
+            (
+                include_str!("../../data/fib.lox"),
+                include_str!("../../data/fib.lox.expected"),
             ),
         ];
 
