@@ -1,4 +1,5 @@
 use losk_core::Error as CoreError;
+use std::fmt;
 use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
@@ -11,9 +12,8 @@ pub(crate) enum Error {
     #[error("[line {line:?}] compile error: {msg:?}")]
     CompileError { line: usize, msg: String },
 
-    #[error("[line {line:?}] runtime error: {msg:?}\n{}", .stack_trace)]
+    #[error("Runtime error: {msg}\n{}", .stack_trace)]
     RuntimeError {
-        line: usize,
         msg: String,
         stack_trace: StackTrace,
     },
@@ -35,25 +35,24 @@ impl StackData {
 }
 
 impl Display for StackData {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "[line {}] in {}", self.line, self.fname)
     }
 }
 
 impl Display for StackTrace {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         for sd in &self.0 {
-            write!(f, "{}", sd)?;
+            writeln!(f, "{}", sd)?;
         }
         Ok(())
     }
 }
 
 impl Error {
-    pub(crate) fn runtime(line: usize, msg: &str, stack_trace: StackTrace) -> Error {
+    pub(crate) fn runtime(msg: fmt::Arguments, stack_trace: StackTrace) -> Error {
         Error::RuntimeError {
-            line,
-            msg: msg.to_string(),
+            msg: format!("{}", msg),
             stack_trace,
         }
     }

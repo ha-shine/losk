@@ -8,6 +8,7 @@ use crate::VmResult;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
 use std::ops::{Deref, DerefMut};
@@ -244,7 +245,9 @@ impl VM {
 
                     match self.globals.get(name) {
                         Some(sval) => self.push(*sval),
-                        None => return Err(self.error(&format!("Undefined variable '{}'.", name))),
+                        None => {
+                            return Err(self.error(format_args!("Undefined variable '{}'.", name)))
+                        }
                     }
                 }
                 Instruction::DefineGlobal(Constant { index }) => {
@@ -294,7 +297,11 @@ impl VM {
                                 self.current_frame_mut().jump(dist - 1)
                             }
                         }
-                        _ => return Err(self.error("Expect test condition to be boolean.")),
+                        _ => {
+                            return Err(
+                                self.error(format_args!("Expect test condition to be boolean."))
+                            )
+                        }
                     }
                 }
                 Instruction::Jump(JumpDist { dist }) => {
@@ -308,14 +315,20 @@ impl VM {
                 }
                 Instruction::Call(ArgCount { count }) => {
                     if self.frame_count == FRAMES_MAX {
-                        return Err(self.error("Stack overflow."));
+                        return Err(self.error(format_args!("Stack overflow.")));
                     }
 
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
                     if let StackValue::Obj(obj) = &self.stack[self.stack.len() - count - 1] {
                         if let HeapValue::Fun(fun) = &obj.value {
-                            // Error if the frame max has been reached
+                            if count != fun.arity {
+                                return Err(self.error(format_args!(
+                                    "Expected {} arguments but got {}.",
+                                    fun.arity, count
+                                )));
+                            }
+
                             self.frames[self.frame_count] = CallFrame {
                                 fun: UnsafeRef::new(fun),
                                 ip: 0,
@@ -323,10 +336,12 @@ impl VM {
                             };
                             self.frame_count += 1;
                         } else {
-                            return Err(self.error("Can only call functions and classes"));
+                            return Err(
+                                self.error(format_args!("Can only call functions and classes"))
+                            );
                         }
                     } else {
-                        return Err(self.error("Can only call functions and classes"));
+                        return Err(self.error(format_args!("Can only call functions and classes")));
                     }
                 }
                 Instruction::Return => {
@@ -357,7 +372,7 @@ impl VM {
                 *entry = val;
                 Ok(())
             }
-            None => Err(self.error(&format!("Undefined variable '{}'.", name))),
+            None => Err(self.error(format_args!("Undefined variable '{}'.", name))),
         }
     }
 
@@ -366,7 +381,7 @@ impl VM {
             .current_frame()
             .chunk
             .get_constant(con.index as usize)
-            .ok_or_else(|| self.error("Unknown constant"))?;
+            .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
 
         match constant {
             Value::Double(val) => self.push(StackValue::Num(*val)),
@@ -404,7 +419,7 @@ impl VM {
                 self.allocate(val);
                 Ok(())
             }
-            Err(msg) => Err(self.error(msg)),
+            Err(msg) => Err(self.error(format_args!("{}", msg))),
         }
     }
 
@@ -534,7 +549,7 @@ impl VM {
         &mut self.frames[self.frame_count - 1]
     }
 
-    fn error(&self, msg: &str) -> Error {
+    fn error(&self, args: fmt::Arguments) -> Error {
         let data: Vec<_> = (0..self.frame_count)
             .rev()
             .map(|idx| {
@@ -545,7 +560,7 @@ impl VM {
             })
             .collect();
 
-        Error::runtime(0, msg, StackTrace(data))
+        Error::runtime(args, StackTrace(data))
     }
 }
 
@@ -571,7 +586,7 @@ mod tests {
         let result = vm.run();
 
         match (result, err) {
-            (Err(Error::RuntimeError { msg, .. }), Some(err)) => assert_eq!(err, msg),
+            (Err(out @ Error::RuntimeError { .. }), Some(err)) => assert_eq!(err, out.to_string()),
             (Err(Error::RuntimeError { msg, .. }), None) => {
                 panic!("Not expecting any error, found '{}'", msg)
             }
@@ -625,5 +640,13 @@ mod tests {
         for (src, expected) in tests {
             test_program(src, Some(expected), None);
         }
+    }
+
+    #[test]
+    fn test_stack_trace() {
+        let src = include_str!("../../data/function_stack_trace.lox");
+        let exp = include_str!("../../data/function_stack_trace.lox.expected");
+
+        test_program(src, None, Some(exp));
     }
 }
