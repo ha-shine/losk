@@ -1,7 +1,8 @@
 use crate::chunk::Instruction;
 use crate::error::{Error, StackData, StackTrace};
 use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
-use crate::object::Function;
+use crate::native::clock;
+use crate::object::{Function, NativeFunction};
 use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
@@ -19,7 +20,7 @@ const FRAMES_MAX: usize = 256;
 
 #[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq)]
-enum StackValue {
+pub(crate) enum StackValue {
     Num(f64),
     Bool(bool),
 
@@ -43,7 +44,7 @@ impl Display for StackValue {
 }
 
 impl Debug for StackValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
@@ -55,23 +56,25 @@ impl Debug for StackValue {
 
 #[allow(dead_code)]
 #[derive(Debug)]
-enum HeapValue {
+pub(crate) enum HeapValue {
     Str(String),
     Fun(Function),
+    NativeFunction(NativeFunction),
 }
 
 impl Display for HeapValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             HeapValue::Str(val) => write!(f, "{}", val),
             HeapValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
+            HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
         }
     }
 }
 
 #[allow(dead_code)]
 #[derive(Debug)]
-struct Object {
+pub(crate) struct Object {
     link: LinkedListLink,
     value: HeapValue,
 }
@@ -171,7 +174,7 @@ pub(crate) struct VM {
     stdout: Rc<RefCell<dyn Write>>,
 }
 
-enum StackOrHeap {
+pub(crate) enum StackOrHeap {
     Stack(StackValue),
     Heap(HeapValue),
 }
@@ -204,13 +207,23 @@ impl VM {
             panic!("Unreachable")
         }
 
+        let clock = Object::new(HeapValue::NativeFunction(NativeFunction::new(
+            "clock", 0, clock,
+        )));
+        objects.push_front(clock);
+
+        let mut globals = HashMap::new();
+        if let Some(obj) = objects.front().get() {
+            globals.insert("clock".to_string(), StackValue::Obj(UnsafeRef::new(obj)));
+        }
+
         VM {
             ip: 0,
             stack,
             objects,
             frames,
             frame_count: 1,
-            globals: HashMap::new(),
+            globals,
             stdout,
         }
     }
@@ -333,24 +346,42 @@ impl VM {
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
                     if let StackValue::Obj(obj) = &self.stack[self.stack.len() - count - 1] {
-                        if let HeapValue::Fun(fun) = &obj.value {
-                            if count != fun.arity {
-                                return Err(self.error(format_args!(
-                                    "Expected {} arguments but got {}.",
-                                    fun.arity, count
-                                )));
-                            }
+                        match &obj.value {
+                            HeapValue::Fun(fun) => {
+                                if count != fun.arity {
+                                    return Err(self.error(format_args!(
+                                        "Expected {} arguments but got {}.",
+                                        fun.arity, count
+                                    )));
+                                }
 
-                            self.frames[self.frame_count] = CallFrame {
-                                fun: UnsafeRef::new(fun),
-                                ip: 0,
-                                slots: self.stack.len() - count - 1,
-                            };
-                            self.frame_count += 1;
-                        } else {
-                            return Err(
-                                self.error(format_args!("Can only call functions and classes"))
-                            );
+                                self.frames[self.frame_count] = CallFrame {
+                                    fun: UnsafeRef::new(fun),
+                                    ip: 0,
+                                    slots: self.stack.len() - count - 1,
+                                };
+                                self.frame_count += 1;
+                            }
+                            HeapValue::NativeFunction(fun) => {
+                                if count != fun.arity {
+                                    return Err(self.error(format_args!(
+                                        "Expected {} arguments but got {}.",
+                                        fun.arity, count
+                                    )));
+                                }
+
+                                let arg_beg = self.stack.len() - count;
+                                let result = (fun.fun)(&self.stack[arg_beg..]);
+                                self.pop_n(count + 1); // args + function data
+                                if let Some(result) = result {
+                                    self.store_value(result)?;
+                                }
+                            }
+                            _ => {
+                                return Err(
+                                    self.error(format_args!("Can only call functions and classes"))
+                                )
+                            }
                         }
                     } else {
                         return Err(self.error(format_args!("Can only call functions and classes")));
@@ -402,21 +433,25 @@ impl VM {
         }
     }
 
+    fn store_value(&mut self, value: Value) -> VmResult<()> {
+        match value {
+            Value::Double(val) => self.push(StackValue::Num(val)),
+            Value::Bool(val) => self.push(StackValue::Bool(val)),
+            Value::Str(val) => self.allocate(HeapValue::Str(val.clone())),
+            Value::Fun(fun) => self.allocate(HeapValue::Fun(fun.clone())),
+            Value::Nil => self.push(StackValue::Nil),
+        }
+
+        Ok(())
+    }
+
     fn execute_constant(&mut self, con: Constant) -> VmResult<()> {
         let constant = self
             .current_frame()
             .chunk
             .get_constant(con.index as usize)
             .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
-
-        match constant {
-            Value::Double(val) => self.push(StackValue::Num(*val)),
-            Value::Bool(val) => self.push(StackValue::Bool(*val)),
-            Value::Str(val) => self.allocate(HeapValue::Str(val.clone())),
-            Value::Fun(fun) => self.allocate(HeapValue::Fun(fun.clone())),
-            Value::Nil => self.push(StackValue::Nil),
-        }
-        Ok(())
+        self.store_value(constant.clone())
     }
 
     fn execute_unary_op(&mut self, op: fn(&mut Self, StackValue) -> OpResult) -> VmResult<()> {
@@ -623,6 +658,7 @@ mod tests {
         if let Some(out) = out {
             assert_eq!(str::from_utf8(&output.borrow()).unwrap(), out);
         }
+
         println!("\n\n");
     }
 

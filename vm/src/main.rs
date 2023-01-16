@@ -6,6 +6,7 @@ mod object;
 mod r#ref;
 mod value;
 mod vm;
+mod native;
 
 pub(crate) use error::VmResult;
 
