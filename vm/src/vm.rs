@@ -265,11 +265,13 @@ impl VM {
                 }
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
                 Instruction::GetLocal(StackOffset { index }) => {
-                    let val = self.stack[index as usize];
+                    let index = self.current_frame().slots + index as usize;
+                    let val = self.stack[index];
                     self.push(val);
                 }
                 Instruction::SetLocal(StackOffset { index }) => {
-                    self.stack[index as usize] = *self.stack.last().unwrap();
+                    let index = self.current_frame().slots + index as usize;
+                    self.stack[index] = *self.stack.last().unwrap();
                 }
                 Instruction::Equal => {
                     let rhs = self.pop();
