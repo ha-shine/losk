@@ -1,6 +1,6 @@
 use crate::chunk::Instruction;
 use crate::error::{CompilerResult, Error};
-use crate::instruction::{Constant, JumpDist, StackOffset};
+use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
 use crate::object::Function;
 use crate::value::Value;
 use losk_core::{Token, TokenStream, Type};
@@ -119,45 +119,45 @@ impl<'a> Context<'a> {
     // I am not sure whether using this as a const is the best idea since the const in Rust is
     // like `#define` and the code is copied to every usage.
     const PARSE_RULES: [ParseRule<'a>; 39] = [
-        ParseRule(Some(Self::grouping), None, Precedence::None), // LeftParen
-        ParseRule(None, None, Precedence::None),                 // RightParen
-        ParseRule(None, None, Precedence::None),                 // LeftBrace
-        ParseRule(None, None, Precedence::None),                 // RightBrace
-        ParseRule(None, None, Precedence::None),                 // Comma
-        ParseRule(None, None, Precedence::None),                 // Dot
-        ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term), // Minus
-        ParseRule(None, Some(Self::binary), Precedence::Term),   // Plus
-        ParseRule(None, None, Precedence::None),                 // Semicolon
-        ParseRule(None, Some(Self::binary), Precedence::Factor), // Slash
-        ParseRule(None, Some(Self::binary), Precedence::Factor), // Star
-        ParseRule(Some(Self::unary), None, Precedence::None),    // Bang
-        ParseRule(None, Some(Self::binary), Precedence::Equality), // BangEqual
-        ParseRule(None, None, Precedence::None),                 // Equal
-        ParseRule(None, Some(Self::binary), Precedence::Equality), // EqualEqual
-        ParseRule(None, Some(Self::binary), Precedence::Comparison), // Greater
-        ParseRule(None, Some(Self::binary), Precedence::Comparison), // GreaterEqual
-        ParseRule(None, Some(Self::binary), Precedence::Comparison), // Less
-        ParseRule(None, Some(Self::binary), Precedence::Comparison), // LessEqual
-        ParseRule(Some(Self::variable), None, Precedence::None), // Identifier
-        ParseRule(Some(Self::string), None, Precedence::None),   // String
-        ParseRule(Some(Self::number), None, Precedence::None),   // Number
-        ParseRule(None, Some(Self::and), Precedence::And),       // And
-        ParseRule(None, None, Precedence::None),                 // Class
-        ParseRule(None, None, Precedence::None),                 // Else
-        ParseRule(Some(Self::literal), None, Precedence::None),  // True
-        ParseRule(Some(Self::literal), None, Precedence::None),  // False
-        ParseRule(None, None, Precedence::None),                 // For
-        ParseRule(None, None, Precedence::None),                 // Fun
-        ParseRule(None, None, Precedence::None),                 // If
-        ParseRule(Some(Self::literal), None, Precedence::None),  // Nil
-        ParseRule(None, Some(Self::or), Precedence::Or),         // Or
-        ParseRule(None, None, Precedence::None),                 // Print
-        ParseRule(None, None, Precedence::None),                 // Return
-        ParseRule(None, None, Precedence::None),                 // Super
-        ParseRule(None, None, Precedence::None),                 // This
-        ParseRule(None, None, Precedence::None),                 // Var
-        ParseRule(None, None, Precedence::None),                 // While
-        ParseRule(None, None, Precedence::None),                 // Error
+        ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call), // LeftParen
+        ParseRule(None, None, Precedence::None),                             // RightParen
+        ParseRule(None, None, Precedence::None),                             // LeftBrace
+        ParseRule(None, None, Precedence::None),                             // RightBrace
+        ParseRule(None, None, Precedence::None),                             // Comma
+        ParseRule(None, None, Precedence::None),                             // Dot
+        ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term),  // Minus
+        ParseRule(None, Some(Self::binary), Precedence::Term),               // Plus
+        ParseRule(None, None, Precedence::None),                             // Semicolon
+        ParseRule(None, Some(Self::binary), Precedence::Factor),             // Slash
+        ParseRule(None, Some(Self::binary), Precedence::Factor),             // Star
+        ParseRule(Some(Self::unary), None, Precedence::None),                // Bang
+        ParseRule(None, Some(Self::binary), Precedence::Equality),           // BangEqual
+        ParseRule(None, None, Precedence::None),                             // Equal
+        ParseRule(None, Some(Self::binary), Precedence::Equality),           // EqualEqual
+        ParseRule(None, Some(Self::binary), Precedence::Comparison),         // Greater
+        ParseRule(None, Some(Self::binary), Precedence::Comparison),         // GreaterEqual
+        ParseRule(None, Some(Self::binary), Precedence::Comparison),         // Less
+        ParseRule(None, Some(Self::binary), Precedence::Comparison),         // LessEqual
+        ParseRule(Some(Self::variable), None, Precedence::None),             // Identifier
+        ParseRule(Some(Self::string), None, Precedence::None),               // String
+        ParseRule(Some(Self::number), None, Precedence::None),               // Number
+        ParseRule(None, Some(Self::and), Precedence::And),                   // And
+        ParseRule(None, None, Precedence::None),                             // Class
+        ParseRule(None, None, Precedence::None),                             // Else
+        ParseRule(Some(Self::literal), None, Precedence::None),              // True
+        ParseRule(Some(Self::literal), None, Precedence::None),              // False
+        ParseRule(None, None, Precedence::None),                             // For
+        ParseRule(None, None, Precedence::None),                             // Fun
+        ParseRule(None, None, Precedence::None),                             // If
+        ParseRule(Some(Self::literal), None, Precedence::None),              // Nil
+        ParseRule(None, Some(Self::or), Precedence::Or),                     // Or
+        ParseRule(None, None, Precedence::None),                             // Print
+        ParseRule(None, None, Precedence::None),                             // Return
+        ParseRule(None, None, Precedence::None),                             // Super
+        ParseRule(None, None, Precedence::None),                             // This
+        ParseRule(None, None, Precedence::None),                             // Var
+        ParseRule(None, None, Precedence::None),                             // While
+        ParseRule(None, None, Precedence::None),                             // Error
     ];
 
     fn new(stream: TokenStream<'a>, ftype: FunctionType) -> Self {
@@ -260,9 +260,7 @@ impl<'a> Context<'a> {
         if self.match_type(Type::Equal) {
             self.expression()?;
         } else {
-            self.fun
-                .chunk
-                .add_instruction(Instruction::LiteralNil, self.prev.as_ref().unwrap().line);
+            self.add_instruction(Instruction::LiteralNil);
         }
 
         let line = self.consume(Type::SemiColon, "Expect ';' after variable declaration.")?;
@@ -301,34 +299,29 @@ impl<'a> Context<'a> {
     fn print_statement(&mut self) -> CompilerResult<()> {
         self.expression()?;
         let line = self.consume(Type::SemiColon, "Expect ';' after value.")?;
-        self.fun.chunk.add_instruction(Instruction::Print, line);
+        self.add_instruction_from(Instruction::Print, line);
         Ok(())
     }
 
     fn if_statement(&mut self) -> CompilerResult<()> {
         self.consume(Type::LeftParen, "Expect '(' after 'if'.")?;
         self.expression()?;
-        let mut line = self.consume(Type::RightParen, "Expect ')' after condition.")?;
 
-        let then_jump = self
-            .fun
-            .chunk
-            .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        let mut line = self.consume(Type::RightParen, "Expect ')' after condition.")?;
+        let then_jump =
+            self.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        self.add_instruction_from(Instruction::Pop, line);
         self.statement()?;
 
         line = self.prev.as_ref().unwrap().line;
-        let else_jump = self
-            .fun
-            .chunk
-            .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+        let else_jump = self.add_instruction_from(Instruction::Jump(JumpDist { dist: 0 }), line);
 
         // Patching jump, here the if statement has been parsed and the program will jump to this
         // place if the test condition is false. In short,
         // then_jump = jump over the "then" statements after "if" when the condition is false
         // else_jump = jump over the "else" statements after executing if statements
         self.fun.chunk.patch_jump(then_jump);
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        self.add_instruction_from(Instruction::Pop, line);
 
         if self.match_type(Type::Else) {
             self.statement()?;
@@ -344,21 +337,17 @@ impl<'a> Context<'a> {
         let loop_start = self.fun.chunk.in_count();
         self.consume(Type::LeftParen, "Expect '(' after while.")?;
         self.expression()?;
-        self.consume(Type::RightParen, "Expect ')' after condition.")?;
 
-        let mut line = self.prev.as_ref().unwrap().line;
-        let exit_jump = self
-            .fun
-            .chunk
-            .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        let mut line = self.consume(Type::RightParen, "Expect ')' after condition.")?;
+        let exit_jump =
+            self.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        self.add_instruction_from(Instruction::Pop, line);
         self.statement()?;
 
         line = self.prev.as_ref().unwrap().line;
         self.emit_loop(loop_start, line);
         self.fun.chunk.patch_jump(exit_jump);
-        line = self.prev.as_ref().unwrap().line;
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        self.add_instruction(Instruction::Pop);
 
         Ok(())
     }
@@ -386,30 +375,22 @@ impl<'a> Context<'a> {
 
             // This jump will be patched to skip the block if the condition is false.
             exit_jump = Some(
-                self.fun
-                    .chunk
-                    .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line),
+                self.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line),
             );
-            self.fun.chunk.add_instruction(Instruction::Pop, line); // pop the condition
+            self.add_instruction_from(Instruction::Pop, line); // pop the condition
         }
 
         // The third part, incrementing the variable (or any expression statement - without ";").
         // This will be run after every block.
         if !self.match_type(Type::RightParen) {
-            let mut line = self.prev.as_ref().unwrap().line;
-            let body_jump = self
-                .fun
-                .chunk
-                .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+            let body_jump = self.add_instruction(Instruction::Jump(JumpDist { dist: 0 }));
             let increment_start = self.fun.chunk.in_count();
             self.expression()?;
-            line = self.prev.as_ref().unwrap().line;
-            self.fun.chunk.add_instruction(Instruction::Pop, line);
-            self.consume(Type::RightParen, "Expect ')' after for clauses.")?;
+            self.add_instruction(Instruction::Pop);
 
             // After incrementing the variable, loop back to the start - which is the condition
             // testing instruction.
-            line = self.prev.as_ref().unwrap().line;
+            let line = self.consume(Type::RightParen, "Expect ')' after for clauses.")?;
             self.emit_loop(loop_start, line);
 
             // The block is set to be looped back to the start - which normally is testing condition.
@@ -429,9 +410,7 @@ impl<'a> Context<'a> {
 
         if let Some(dist) = exit_jump {
             self.fun.chunk.patch_jump(dist);
-            self.fun
-                .chunk
-                .add_instruction(Instruction::Pop, self.prev.as_ref().unwrap().line);
+            self.add_instruction(Instruction::Pop);
         }
 
         Ok(())
@@ -440,7 +419,7 @@ impl<'a> Context<'a> {
     fn expression_statement(&mut self) -> CompilerResult<()> {
         self.expression()?;
         let line = self.consume(Type::SemiColon, "Expect ';' after expression.")?;
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        self.add_instruction_from(Instruction::Pop, line);
         Ok(())
     }
 
@@ -482,10 +461,7 @@ impl<'a> Context<'a> {
                 .chunk
                 .make_constant(Value::Fun(fun_ctx.fun))
                 .unwrap();
-            self.fun.chunk.add_instruction(
-                Instruction::Constant(fun_const),
-                self.prev.as_ref().unwrap().line,
-            );
+            self.add_instruction(Instruction::Constant(fun_const));
             Ok(())
         }
     }
@@ -506,10 +482,10 @@ impl<'a> Context<'a> {
 
         match ty {
             Type::Minus => {
-                self.fun.chunk.add_instruction(Instruction::Negate, line);
+                self.add_instruction_from(Instruction::Negate, line);
             }
             Type::Bang => {
-                self.fun.chunk.add_instruction(Instruction::Not, line);
+                self.add_instruction_from(Instruction::Not, line);
             }
             _ => panic!("Unreachable"),
         }
@@ -532,37 +508,37 @@ impl<'a> Context<'a> {
 
         match ty {
             Type::Plus => {
-                self.fun.chunk.add_instruction(Instruction::Add, line);
+                self.add_instruction_from(Instruction::Add, line);
             }
             Type::Minus => {
-                self.fun.chunk.add_instruction(Instruction::Subtract, line);
+                self.add_instruction_from(Instruction::Subtract, line);
             }
             Type::Star => {
-                self.fun.chunk.add_instruction(Instruction::Multiply, line);
+                self.add_instruction_from(Instruction::Multiply, line);
             }
             Type::Slash => {
-                self.fun.chunk.add_instruction(Instruction::Divide, line);
+                self.add_instruction_from(Instruction::Divide, line);
             }
             Type::BangEqual => {
-                self.fun.chunk.add_instruction(Instruction::Equal, line);
-                self.fun.chunk.add_instruction(Instruction::Not, line);
+                self.add_instruction_from(Instruction::Equal, line);
+                self.add_instruction_from(Instruction::Not, line);
             }
             Type::EqualEqual => {
-                self.fun.chunk.add_instruction(Instruction::Equal, line);
+                self.add_instruction_from(Instruction::Equal, line);
             }
             Type::Greater => {
-                self.fun.chunk.add_instruction(Instruction::Greater, line);
+                self.add_instruction_from(Instruction::Greater, line);
             }
             Type::GreaterEqual => {
-                self.fun.chunk.add_instruction(Instruction::Less, line);
-                self.fun.chunk.add_instruction(Instruction::Not, line);
+                self.add_instruction_from(Instruction::Less, line);
+                self.add_instruction_from(Instruction::Not, line);
             }
             Type::Less => {
-                self.fun.chunk.add_instruction(Instruction::Less, line);
+                self.add_instruction_from(Instruction::Less, line);
             }
             Type::LessEqual => {
-                self.fun.chunk.add_instruction(Instruction::Greater, line);
-                self.fun.chunk.add_instruction(Instruction::Not, line);
+                self.add_instruction_from(Instruction::Greater, line);
+                self.add_instruction_from(Instruction::Not, line);
             }
             _ => panic!("Unreachable"),
         }
@@ -570,16 +546,22 @@ impl<'a> Context<'a> {
         Ok(())
     }
 
+    fn call(&mut self, _: bool) -> CompilerResult<()> {
+        let args = self.argument_list()?;
+        if args.count > 255 {
+            return Err(self.error("Can't have more than 255 parameters."));
+        }
+
+        self.add_instruction(Instruction::Call(args));
+        Ok(())
+    }
+
     // When this is called, the left-hand side expression has already been compiled. If that value
     // is false, leave that value on the stack and skip the whole expression. If not, pop that
     // value from the stack and evaluate the next expression.
     fn and(&mut self, _: bool) -> CompilerResult<()> {
-        let line = self.prev.as_ref().unwrap().line;
-        let end_jump = self
-            .fun
-            .chunk
-            .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        let end_jump = self.add_instruction(Instruction::Jump(JumpDist { dist: 0 }));
+        self.add_instruction(Instruction::Pop);
         self.parse_precedence(Precedence::And)?;
         self.fun.chunk.patch_jump(end_jump);
         Ok(())
@@ -590,16 +572,11 @@ impl<'a> Context<'a> {
     // after the or expression which is taken when the value is true).
     fn or(&mut self, _: bool) -> CompilerResult<()> {
         let line = self.prev.as_ref().unwrap().line;
-        let else_jump = self
-            .fun
-            .chunk
-            .add_instruction(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
-        let end_jump = self
-            .fun
-            .chunk
-            .add_instruction(Instruction::Jump(JumpDist { dist: 0 }), line);
+        let else_jump =
+            self.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        let end_jump = self.add_instruction_from(Instruction::Jump(JumpDist { dist: 0 }), line);
         self.fun.chunk.patch_jump(else_jump);
-        self.fun.chunk.add_instruction(Instruction::Pop, line);
+        self.add_instruction_from(Instruction::Pop, line);
         self.parse_precedence(Precedence::Or)?;
         self.fun.chunk.patch_jump(end_jump);
         Ok(())
@@ -609,19 +586,13 @@ impl<'a> Context<'a> {
         let prev = self.prev.as_ref().unwrap();
         match prev.ty {
             Type::True => {
-                self.fun
-                    .chunk
-                    .add_instruction(Instruction::LiteralTrue, prev.line);
+                self.add_instruction_from(Instruction::LiteralTrue, prev.line);
             }
             Type::False => {
-                self.fun
-                    .chunk
-                    .add_instruction(Instruction::LiteralFalse, prev.line);
+                self.add_instruction_from(Instruction::LiteralFalse, prev.line);
             }
             Type::Nil => {
-                self.fun
-                    .chunk
-                    .add_instruction(Instruction::LiteralNil, prev.line);
+                self.add_instruction_from(Instruction::LiteralNil, prev.line);
             }
             _ => panic!("Unreachable"),
         }
@@ -633,9 +604,7 @@ impl<'a> Context<'a> {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = self.fun.chunk.make_constant(value).unwrap();
-        self.fun
-            .chunk
-            .add_instruction(Instruction::Constant(constant), prev.line);
+        self.add_instruction_from(Instruction::Constant(constant), prev.line);
         Ok(())
     }
 
@@ -643,9 +612,7 @@ impl<'a> Context<'a> {
         let prev = self.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = self.fun.chunk.make_constant(value).unwrap();
-        self.fun
-            .chunk
-            .add_instruction(Instruction::Constant(constant), prev.line);
+        self.add_instruction_from(Instruction::Constant(constant), prev.line);
         Ok(())
     }
 
@@ -679,9 +646,9 @@ impl<'a> Context<'a> {
 
         if can_assign && self.match_type(Type::Equal) {
             self.expression()?;
-            self.fun.chunk.add_instruction(set_op, line);
+            self.add_instruction_from(set_op, line);
         } else {
-            self.fun.chunk.add_instruction(get_op, line);
+            self.add_instruction_from(get_op, line);
         }
         Ok(())
     }
@@ -800,9 +767,24 @@ impl<'a> Context<'a> {
             return;
         }
 
-        self.fun
-            .chunk
-            .add_instruction(Instruction::DefineGlobal(constant), line);
+        self.add_instruction_from(Instruction::DefineGlobal(constant), line);
+    }
+
+    fn argument_list(&mut self) -> CompilerResult<ArgCount> {
+        let mut count = 0;
+        if !self.check(Type::RightParen) {
+            loop {
+                self.expression()?;
+                count += 1;
+
+                if !self.match_type(Type::Comma) {
+                    break;
+                }
+            }
+        }
+
+        self.consume(Type::RightParen, "Expect ')' after arguments.")?;
+        Ok(ArgCount { count })
     }
 
     fn mark_initialized(&mut self) {
@@ -827,9 +809,16 @@ impl<'a> Context<'a> {
         }
 
         if n > 0 {
-            let line = self.prev.as_ref().unwrap().line;
-            self.fun.chunk.add_instruction(Instruction::PopN(n), line);
+            self.add_instruction(Instruction::PopN(n));
         }
+    }
+
+    fn add_instruction(&mut self, instruction: Instruction) -> usize {
+        self.add_instruction_from(instruction, self.prev.as_ref().unwrap().line)
+    }
+
+    fn add_instruction_from(&mut self, instruction: Instruction, from_line: usize) -> usize {
+        self.fun.chunk.add_instruction(instruction, from_line)
     }
 
     fn advance(&mut self) {
@@ -862,9 +851,7 @@ impl<'a> Context<'a> {
 
     fn emit_loop(&mut self, start: usize, line: usize) {
         let dist = self.fun.chunk.in_count() - start;
-        self.fun
-            .chunk
-            .add_instruction(Instruction::Loop(JumpDist { dist }), line);
+        self.add_instruction_from(Instruction::Loop(JumpDist { dist }), line);
     }
 
     fn check(&self, ty: Type) -> bool {

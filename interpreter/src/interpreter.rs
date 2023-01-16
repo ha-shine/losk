@@ -559,6 +559,10 @@ mod tests {
                 include_str!("../../data/print_function.lox.expected"),
             ),
             (
+                include_str!("../../data/fun_no_return.lox"),
+                include_str!("../../data/fun_no_return.lox.expected"),
+            ),
+            (
                 include_str!("../../data/binding.lox"),
                 include_str!("../../data/binding.lox.expected"),
             ),

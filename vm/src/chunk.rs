@@ -1,4 +1,4 @@
-use crate::instruction::{Constant, JumpDist, StackOffset};
+use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
 use crate::value::Value;
 
 // These instructions need to be able to turn into opcodes (format unknown yet.)
@@ -34,6 +34,7 @@ pub(crate) enum Instruction {
     JumpIfFalse(JumpDist),
     Jump(JumpDist),
     Loop(JumpDist),
+    Call(ArgCount),
     Return,
 }
 

@@ -1,6 +1,6 @@
-use crate::chunk::{Chunk, Instruction};
-use crate::error::Error;
-use crate::instruction::{Constant, JumpDist, StackOffset};
+use crate::chunk::Instruction;
+use crate::error::{Error, StackData, StackTrace};
+use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
 use crate::object::Function;
 use crate::r#ref::UnsafeRef;
 use crate::value::Value;
@@ -244,12 +244,7 @@ impl VM {
 
                     match self.globals.get(name) {
                         Some(sval) => self.push(*sval),
-                        None => {
-                            return Err(Error::runtime(
-                                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
-                                &format!("Undefined variable '{}'.", name),
-                            ))
-                        }
+                        None => return Err(self.error(&format!("Undefined variable '{}'.", name))),
                     }
                 }
                 Instruction::DefineGlobal(Constant { index }) => {
@@ -299,12 +294,7 @@ impl VM {
                                 self.current_frame_mut().jump(dist - 1)
                             }
                         }
-                        _ => {
-                            return Err(Error::runtime(
-                                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
-                                "Expect test condition to be boolean.",
-                            ))
-                        }
+                        _ => return Err(self.error("Expect test condition to be boolean.")),
                     }
                 }
                 Instruction::Jump(JumpDist { dist }) => {
@@ -315,6 +305,29 @@ impl VM {
                     // Add 1 to distance because the instruction pointer has already been incremented
                     // by 1, so it's pointing to the instruction one after this.
                     self.current_frame_mut().loop_(dist + 1)
+                }
+                Instruction::Call(ArgCount { count }) => {
+                    if self.frame_count == FRAMES_MAX {
+                        return Err(self.error("Stack overflow."));
+                    }
+
+                    // The previous instructions must have pushed `count` amount to stack, so
+                    // the function value would exist at stack[-count].
+                    if let StackValue::Obj(obj) = &self.stack[self.stack.len() - count - 1] {
+                        if let HeapValue::Fun(fun) = &obj.value {
+                            // Error if the frame max has been reached
+                            self.frames[self.frame_count] = CallFrame {
+                                fun: UnsafeRef::new(fun),
+                                ip: 0,
+                                slots: self.stack.len() - count,
+                            };
+                            self.frame_count += 1;
+                        } else {
+                            return Err(self.error("Can only call functions and classes"));
+                        }
+                    } else {
+                        return Err(self.error("Can only call functions and classes"));
+                    }
                 }
                 Instruction::Return => {
                     self.pop();
@@ -344,10 +357,7 @@ impl VM {
                 *entry = val;
                 Ok(())
             }
-            None => Err(Error::runtime(
-                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
-                &format!("Undefined variable '{}'.", name),
-            )),
+            None => Err(self.error(&format!("Undefined variable '{}'.", name))),
         }
     }
 
@@ -356,10 +366,7 @@ impl VM {
             .current_frame()
             .chunk
             .get_constant(con.index as usize)
-            .ok_or_else(|| Error::RuntimeError {
-                line: *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
-                msg: String::from(""),
-            })?;
+            .ok_or_else(|| self.error("Unknown constant"))?;
 
         match constant {
             Value::Double(val) => self.push(StackValue::Num(*val)),
@@ -397,10 +404,7 @@ impl VM {
                 self.allocate(val);
                 Ok(())
             }
-            Err(msg) => Err(Error::runtime(
-                *self.current_frame().chunk.get_line(self.ip - 1).unwrap(),
-                msg,
-            )),
+            Err(msg) => Err(self.error(msg)),
         }
     }
 
@@ -494,7 +498,7 @@ impl VM {
     }
 
     fn get_line(&self) -> usize {
-        *self.current_frame().chunk.get_line(self.ip).unwrap()
+        *self.current_frame().chunk.get_line(self.ip - 1).unwrap()
     }
 
     fn push(&mut self, val: StackValue) {
@@ -528,6 +532,20 @@ impl VM {
 
     fn current_frame_mut(&mut self) -> &mut CallFrame {
         &mut self.frames[self.frame_count - 1]
+    }
+
+    fn error(&self, msg: &str) -> Error {
+        let data: Vec<_> = (0..self.frame_count)
+            .rev()
+            .map(|idx| {
+                let frame = self.frames[idx];
+                let line = *frame.fun.chunk.get_line(frame.ip - 1).unwrap();
+                let name = frame.fun.name.clone();
+                StackData::new(line, name)
+            })
+            .collect();
+
+        Error::runtime(0, msg, StackTrace(data))
     }
 }
 
@@ -597,6 +615,10 @@ mod tests {
             (
                 include_str!("../../data/print_function.lox"),
                 include_str!("../../data/print_function.lox.expected"),
+            ),
+            (
+                include_str!("../../data/fun_no_return.lox"),
+                include_str!("../../data/fun_no_return.lox.expected"),
             ),
         ];
 
