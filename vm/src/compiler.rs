@@ -5,7 +5,7 @@ use crate::object::Function;
 use crate::value::Value;
 use losk_core::{Token, TokenStream, Type};
 
-pub(crate) struct Compiler;
+pub struct Compiler;
 
 #[derive(Copy, Clone)]
 enum Precedence {
@@ -47,11 +47,11 @@ enum FunctionType {
 }
 
 impl Compiler {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Compiler
     }
 
-    pub(crate) fn compile(&self, stream: TokenStream) -> Result<Function, Vec<Error>> {
+    pub fn compile(&self, stream: TokenStream) -> Result<Function, Vec<Error>> {
         let ctx = Context::compiled(stream, FunctionType::Script);
 
         if !ctx.errs.is_empty() {

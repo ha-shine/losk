@@ -1,21 +1,9 @@
-mod chunk;
-mod compiler;
-mod error;
-mod instruction;
-mod native;
-mod object;
-mod r#ref;
-mod value;
-mod vm;
-
-use crate::compiler::Compiler;
-use crate::vm::VM;
-pub(crate) use error::VmResult;
 use losk_core::Scanner;
 use std::fs::File;
 use std::io::{stdout, Read};
 use std::process::exit;
 use std::{env, io};
+use vm::{Compiler, VM};
 
 fn read_file(name: &str) -> Result<String, io::Error> {
     let mut src = String::new();

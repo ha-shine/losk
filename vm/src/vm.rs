@@ -139,7 +139,7 @@ impl Default for CallFrame {
     }
 }
 
-pub(crate) struct VM<'a> {
+pub struct VM<'a> {
     // The stack as a growable vector. In textbook, this is represented by an array and a stack
     // pointer that always point to one element past the top. This is not required here since the
     // vector already give us those functionality.
@@ -173,7 +173,7 @@ pub(crate) enum StackOrHeap {
 type OpResult = Result<StackOrHeap, &'static str>;
 
 impl<'a> VM<'a> {
-    pub(crate) fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
+    pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
         let main = Object::new(HeapValue::Fun(main));
         let mut objects = LinkedList::new(ListAdapter::new());
         objects.push_front(main);
@@ -217,7 +217,7 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub(crate) fn run(&mut self) -> VmResult<()> {
+    pub fn run(&mut self) -> VmResult<()> {
         loop {
             // Instruction is cheap to copy, though the run loop is very sensitive to performance
             // and not sure this would affect the runtime severely.

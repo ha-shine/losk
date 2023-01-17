@@ -4,7 +4,7 @@ use crate::vm::StackValue;
 use std::fmt::{Debug, Formatter};
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Function {
+pub struct Function {
     pub(crate) name: String,
     pub(crate) arity: usize,
     pub(crate) chunk: Chunk,

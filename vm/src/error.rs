@@ -5,7 +5,7 @@ use thiserror::Error;
 
 #[derive(Debug, Error, PartialEq)]
 #[allow(clippy::enum_variant_names)]
-pub(crate) enum Error {
+pub enum Error {
     #[error("[line {line}] scanner error: {}", .source)]
     ScannerError { line: usize, source: CoreError },
 
@@ -20,7 +20,7 @@ pub(crate) enum Error {
 }
 
 #[derive(Debug, Error, PartialEq)]
-pub(crate) struct StackTrace(pub(crate) Vec<StackData>);
+pub struct StackTrace(pub(crate) Vec<StackData>);
 
 #[derive(Debug, Error, PartialEq)]
 pub(crate) struct StackData {
@@ -74,5 +74,5 @@ impl From<CoreError> for Error {
     }
 }
 
-pub(crate) type VmResult<T> = Result<T, Error>;
-pub(crate) type CompilerResult<T> = Result<T, Error>;
+pub type VmResult<T> = Result<T, Error>;
+pub type CompilerResult<T> = Result<T, Error>;
