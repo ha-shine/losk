@@ -15,26 +15,6 @@ pub(crate) enum Value {
     Nil,
 }
 
-impl Value {
-    pub(crate) fn greater(self, other: Self) -> Result<Value, &'static str> {
-        match (self, other) {
-            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Bool(lhs > rhs)),
-            (Value::Bool(lhs), Value::Bool(rhs)) => Ok(Value::Bool(lhs & !rhs)),
-            (Value::Nil, Value::Nil) => Ok(Value::Bool(false)),
-            (_, _) => Err("Expect the operands to be of same type."),
-        }
-    }
-
-    pub(crate) fn less(self, other: Self) -> Result<Value, &'static str> {
-        match (self, other) {
-            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Bool(lhs < rhs)),
-            (Value::Bool(lhs), Value::Bool(rhs)) => Ok(Value::Bool(!lhs & rhs)),
-            (Value::Nil, Value::Nil) => Ok(Value::Bool(false)),
-            (_, _) => Err("Expect the operands to be of same type."),
-        }
-    }
-}
-
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {

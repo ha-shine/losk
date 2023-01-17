@@ -18,3 +18,4 @@
       a variable is declared, or referred further in the code even if it has already been declared. It's easy to
       optimize this by using a map to avoid creating new constants for those already been created. But this means, during
       runtime, the constants will be accessed out of order and cache efficiency will drop.
+- [ ] Currently there's no way for native function to signal a runtime error, support this feature.

@@ -66,36 +66,3 @@ impl<T> DerefMut for UnsafeRef<T> {
         self.borrow_mut()
     }
 }
-
-// UnsafeWeak is a similar wrapper like UnsafeRef, but check the referent before borrowing. Although
-// these methods could be implemented on the UnsafeRef, I would like the two types to be visually
-// difference enough to be noticeable on a glance.
-#[derive(Copy, Clone)]
-pub(crate) struct UnsafeWeak<T> {
-    ptr: *const T,
-}
-
-impl<T> UnsafeWeak<T> {
-    pub(crate) fn new(obj: &T) -> Self {
-        UnsafeWeak { ptr: obj }
-    }
-
-    pub(crate) fn try_borrow(&self) -> Option<&T> {
-        if self.ptr.is_null() {
-            None
-        } else {
-            unsafe { Some(&*self.ptr as &T) }
-        }
-    }
-
-    fn try_borrow_mut(&mut self) -> Option<&mut T> {
-        if self.ptr.is_null() {
-            None
-        } else {
-            unsafe {
-                let mut_ptr = self.ptr as *mut T;
-                Some(&mut *mut_ptr as &mut T)
-            }
-        }
-    }
-}

@@ -7,18 +7,15 @@ use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
 use std::ops::{Deref, DerefMut};
-use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
 const FRAMES_MAX: usize = 256;
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq)]
 pub(crate) enum StackValue {
     Num(f64),
@@ -54,7 +51,6 @@ impl Debug for StackValue {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) enum HeapValue {
     Str(String),
@@ -72,7 +68,6 @@ impl Display for HeapValue {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub(crate) struct Object {
     link: LinkedListLink,
@@ -144,11 +139,7 @@ impl Default for CallFrame {
     }
 }
 
-#[allow(dead_code)]
-pub(crate) struct VM {
-    // instruction pointer, this will be incremented during interpretation
-    ip: usize,
-
+pub(crate) struct VM<'a> {
     // The stack as a growable vector. In textbook, this is represented by an array and a stack
     // pointer that always point to one element past the top. This is not required here since the
     // vector already give us those functionality.
@@ -171,7 +162,7 @@ pub(crate) struct VM {
     globals: HashMap<String, StackValue>,
 
     // The VM will write the output strings into this stdout
-    stdout: Rc<RefCell<dyn Write>>,
+    stdout: &'a mut dyn Write,
 }
 
 pub(crate) enum StackOrHeap {
@@ -181,9 +172,8 @@ pub(crate) enum StackOrHeap {
 
 type OpResult = Result<StackOrHeap, &'static str>;
 
-#[allow(dead_code)]
-impl VM {
-    pub(crate) fn new(stdout: Rc<RefCell<dyn Write>>, main: Function) -> Self {
+impl<'a> VM<'a> {
+    pub(crate) fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
         let main = Object::new(HeapValue::Fun(main));
         let mut objects = LinkedList::new(ListAdapter::new());
         objects.push_front(main);
@@ -218,7 +208,6 @@ impl VM {
         }
 
         VM {
-            ip: 0,
             stack,
             objects,
             frames,
@@ -228,12 +217,7 @@ impl VM {
         }
     }
 
-    pub(crate) fn interpret(&mut self) -> VmResult<()> {
-        self.ip = 0;
-        Ok(())
-    }
-
-    fn run(&mut self) -> VmResult<()> {
+    pub(crate) fn run(&mut self) -> VmResult<()> {
         loop {
             // Instruction is cheap to copy, though the run loop is very sensitive to performance
             // and not sure this would affect the runtime severely.
@@ -244,7 +228,7 @@ impl VM {
 
             #[cfg(feature = "debug-trace-execution")]
             for val in &self.stack {
-                writeln!(self.stdout.borrow_mut(), "[ {:10?} ]", val).unwrap();
+                writeln!(self.stdout, "[ {:10?} ]", val).unwrap();
             }
 
             match instruction {
@@ -311,7 +295,7 @@ impl VM {
                 Instruction::Divide => self.execute_binary_op(Self::div)?,
                 Instruction::Print => {
                     let val = self.pop();
-                    writeln!(self.stdout.borrow_mut(), "{}", val).unwrap();
+                    writeln!(self.stdout, "{}", val).unwrap();
                 }
                 Instruction::JumpIfFalse(JumpDist { dist }) => {
                     // The pointer has already been incremented by 1 before this match statement,
@@ -573,10 +557,6 @@ impl VM {
         }
     }
 
-    fn get_line(&self) -> usize {
-        *self.current_frame().chunk.get_line(self.ip - 1).unwrap()
-    }
-
     fn push(&mut self, val: StackValue) {
         self.stack.push(val)
     }
@@ -641,9 +621,9 @@ mod tests {
         let mut scanner = Scanner::new();
         let compiler = Compiler::new();
         let fun = compiler.compile(scanner.scan_tokens(src)).unwrap();
-        let output: Rc<RefCell<Vec<u8>>> = Rc::new(RefCell::new(Vec::new()));
+        let mut output: Vec<u8> = Vec::new();
 
-        let mut vm = VM::new(output.clone(), fun);
+        let mut vm = VM::new(&mut output, fun);
         let result = vm.run();
 
         match (result, err) {
@@ -656,7 +636,7 @@ mod tests {
         }
 
         if let Some(out) = out {
-            assert_eq!(str::from_utf8(&output.borrow()).unwrap(), out);
+            assert_eq!(str::from_utf8(&output).unwrap(), out);
         }
 
         println!("\n\n");

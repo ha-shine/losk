@@ -46,7 +46,6 @@ enum FunctionType {
     Function,
 }
 
-#[allow(dead_code)]
 impl Compiler {
     pub(crate) fn new() -> Self {
         Compiler
