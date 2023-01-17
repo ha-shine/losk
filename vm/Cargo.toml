@@ -12,6 +12,7 @@ thiserror = "1.0.38"
 losk-core = { path = "../losk-core" }
 phf = { version = "0.11.1", features = ["macros"] }
 intrusive-collections = "0.9.4"
+array-init = "2.1.0"
 
 [dev-dependencies]
 criterion = "0.4.0"

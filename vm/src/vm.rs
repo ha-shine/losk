@@ -3,7 +3,6 @@ use crate::error::{Error, StackData, StackTrace};
 use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
 use crate::native::clock;
 use crate::object::{Function, NativeFunction};
-use crate::r#ref::UnsafeRef;
 use crate::value::Value;
 use crate::VmResult;
 use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
@@ -11,12 +10,13 @@ use std::collections::HashMap;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
-use std::ops::{Deref, DerefMut};
+use std::ops::Deref;
+use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
 const FRAMES_MAX: usize = 256;
 
-#[derive(Copy, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub(crate) enum StackValue {
     Num(f64),
     Bool(bool),
@@ -25,7 +25,7 @@ pub(crate) enum StackValue {
     // Plus doing this as reference means there will be a sea of lifetime indicators in here.
     // This probably should be refactored out into its own RefCell-ish type, but this will suffice
     // for now.
-    Obj(UnsafeRef<Object>),
+    Obj(Rc<Object>),
     Nil,
 }
 
@@ -34,7 +34,7 @@ impl Display for StackValue {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{}", val.borrow().value),
+            StackValue::Obj(val) => write!(f, "{}", val.value),
             StackValue::Nil => write!(f, "nil"),
         }
     }
@@ -45,16 +45,16 @@ impl Debug for StackValue {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{:?} -> {}", val, val.borrow().value),
+            StackValue::Obj(val) => write!(f, "{:?} -> {}", val, val.value),
             StackValue::Nil => write!(f, "nil"),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) enum HeapValue {
     Str(String),
-    Fun(Function),
+    Fun(Rc<Function>),
     NativeFunction(NativeFunction),
 }
 
@@ -74,11 +74,17 @@ pub(crate) struct Object {
     value: HeapValue,
 }
 
-intrusive_adapter!(ListAdapter = Box<Object>: Object { link: LinkedListLink });
+impl PartialEq for Object {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+intrusive_adapter!(ListAdapter = Rc<Object>: Object { link: LinkedListLink });
 
 impl Object {
-    fn new(val: HeapValue) -> Box<Object> {
-        Box::new(Object {
+    fn new(val: HeapValue) -> Rc<Object> {
+        Rc::new(Object {
             link: LinkedListLink::new(),
             value: val,
         })
@@ -89,11 +95,11 @@ impl Object {
 // is called. This keeps an offset of value stack pointer in `slots` which marks the start of
 // this call and every value this frame owns needs to be referenced using index `slots + offset`.
 // Copy-derived to initialise an array of frames with default values when the VM starts.
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 struct CallFrame {
     // Unsafe pointer is used for performance, but the actual function will reside in the VM's
     // main function
-    fun: UnsafeRef<Function>,
+    fun: Rc<Function>,
 
     ip: usize,
     slots: usize,
@@ -104,12 +110,6 @@ impl Deref for CallFrame {
 
     fn deref(&self) -> &Self::Target {
         &self.fun
-    }
-}
-
-impl DerefMut for CallFrame {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.fun
     }
 }
 
@@ -132,7 +132,7 @@ impl CallFrame {
 impl Default for CallFrame {
     fn default() -> Self {
         CallFrame {
-            fun: UnsafeRef::empty(),
+            fun: Rc::new(Function::empty()),
             ip: 0,
             slots: 0,
         }
@@ -174,38 +174,29 @@ type OpResult = Result<StackOrHeap, &'static str>;
 
 impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
-        let main = Object::new(HeapValue::Fun(main));
+        let main_ptr = Rc::new(main);
+        let main = Object::new(HeapValue::Fun(main_ptr.clone()));
         let mut objects = LinkedList::new(ListAdapter::new());
-        objects.push_front(main);
+        objects.push_front(main.clone());
 
         // The main function needs to be pushed onto the objects first because doing that will
         // send the object to the heap and the pointer created prior will be invalidated.
-        let mut frames = [Default::default(); 256];
+        let mut frames: [CallFrame; FRAMES_MAX] = array_init::array_init(|i| CallFrame::default());
         let mut stack = Vec::with_capacity(DEFAULT_STACK);
-        if let Some(obj) = objects.front().get() {
-            stack.push(StackValue::Obj(UnsafeRef::new(obj)));
-            if let HeapValue::Fun(fun) = &objects.front().get().unwrap().value {
-                frames[0] = CallFrame {
-                    fun: UnsafeRef::new(fun),
-                    ip: 0,
-                    slots: 0,
-                };
-            } else {
-                panic!("Unreachable")
-            }
-        } else {
-            panic!("Unreachable")
-        }
+        stack.push(StackValue::Obj(main));
+        frames[0] = CallFrame {
+            fun: main_ptr,
+            ip: 0,
+            slots: 0,
+        };
 
         let clock = Object::new(HeapValue::NativeFunction(NativeFunction::new(
             "clock", 0, clock,
         )));
-        objects.push_front(clock);
+        objects.push_front(clock.clone());
 
         let mut globals = HashMap::new();
-        if let Some(obj) = objects.front().get() {
-            globals.insert("clock".to_string(), StackValue::Obj(UnsafeRef::new(obj)));
-        }
+        globals.insert("clock".to_string(), StackValue::Obj(clock));
 
         VM {
             stack,
@@ -249,7 +240,7 @@ impl<'a> VM<'a> {
                     };
 
                     match self.globals.get(name) {
-                        Some(sval) => self.push(*sval),
+                        Some(sval) => self.push(sval.clone()),
                         None => {
                             return Err(self.error(format_args!("Undefined variable '{}'.", name)))
                         }
@@ -272,12 +263,12 @@ impl<'a> VM<'a> {
                 // call frame
                 Instruction::GetLocal(StackOffset { index }) => {
                     let index = self.current_frame().slots + index as usize + 1;
-                    let val = self.stack[index];
+                    let val = self.stack[index].clone();
                     self.push(val);
                 }
                 Instruction::SetLocal(StackOffset { index }) => {
                     let index = self.current_frame().slots + index as usize + 1;
-                    self.stack[index] = *self.stack.last().unwrap();
+                    self.stack[index] = self.stack.last().unwrap().clone();
                 }
 
                 Instruction::Equal => {
@@ -340,7 +331,7 @@ impl<'a> VM<'a> {
                                 }
 
                                 self.frames[self.frame_count] = CallFrame {
-                                    fun: UnsafeRef::new(fun),
+                                    fun: fun.clone(),
                                     ip: 0,
                                     slots: self.stack.len() - count - 1,
                                 };
@@ -395,7 +386,7 @@ impl<'a> VM<'a> {
     fn execute_set_global(&mut self, constant: Constant) -> VmResult<()> {
         // Note that the set variable doesn't pop the value from the stack because the set assignment
         // is an expression statement and there always is a pop instruction after expression statement.
-        let val = *self.peek();
+        let val = self.peek().clone();
 
         // It's a bit wasteful to clone the constant name everytime it's assigned, but I want to
         // avoid unsafe code in this before profiling.
@@ -421,8 +412,8 @@ impl<'a> VM<'a> {
         match value {
             Value::Double(val) => self.push(StackValue::Num(val)),
             Value::Bool(val) => self.push(StackValue::Bool(val)),
-            Value::Str(val) => self.allocate(HeapValue::Str(val.clone())),
-            Value::Fun(fun) => self.allocate(HeapValue::Fun(fun.clone())),
+            Value::Str(val) => self.allocate(HeapValue::Str(val)),
+            Value::Fun(fun) => self.allocate(HeapValue::Fun(Rc::new(fun))),
             Value::Nil => self.push(StackValue::Nil),
         }
 
@@ -480,20 +471,15 @@ impl<'a> VM<'a> {
             (StackValue::Num(l), StackValue::Num(r)) => {
                 Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
             }
-            (StackValue::Obj(l), StackValue::Obj(r)) => {
-                let lobj = l.borrow();
-                let robj = r.borrow();
-
-                match (&lobj.value, &robj.value) {
-                    (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
-                        let mut res = String::with_capacity(lstr.len() + rstr.len());
-                        res += lstr;
-                        res += rstr;
-                        Ok(StackOrHeap::Heap(HeapValue::Str(res)))
-                    }
-                    _ => Err("Expect both operands to be either numbers or strings."),
+            (StackValue::Obj(l), StackValue::Obj(r)) => match (&l.value, &r.value) {
+                (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
+                    let mut res = String::with_capacity(lstr.len() + rstr.len());
+                    res += lstr;
+                    res += rstr;
+                    Ok(StackOrHeap::Heap(HeapValue::Str(res)))
                 }
-            }
+                _ => Err("Expect both operands to be either numbers or strings."),
+            },
             (_, _) => Err("Expect both operands to be either numbers or strings."),
         }
     }
@@ -576,7 +562,7 @@ impl<'a> VM<'a> {
 
     fn allocate(&mut self, val: HeapValue) {
         let hval = Object::new(val);
-        let sval = StackValue::Obj(UnsafeRef::new(&hval));
+        let sval = StackValue::Obj(hval.clone());
 
         self.objects.push_front(hval);
         self.stack.push(sval);
@@ -594,7 +580,7 @@ impl<'a> VM<'a> {
         let data: Vec<_> = (0..self.frame_count)
             .rev()
             .map(|idx| {
-                let frame = self.frames[idx];
+                let frame = &self.frames[idx];
                 let line = *frame.fun.chunk.get_line(frame.ip - 1).unwrap();
                 let name = frame.fun.name.clone();
                 StackData::new(line, name)
@@ -611,8 +597,6 @@ mod tests {
     use crate::error::Error;
     use crate::vm::VM;
     use losk_core::Scanner;
-    use std::cell::RefCell;
-    use std::rc::Rc;
     use std::str;
 
     fn test_program(src: &str, out: Option<&str>, err: Option<&str>) {

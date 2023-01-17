@@ -4,7 +4,6 @@ pub mod error;
 pub mod instruction;
 pub mod native;
 pub mod object;
-pub mod r#ref;
 pub mod value;
 pub mod vm;
 

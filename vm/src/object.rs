@@ -24,11 +24,25 @@ impl Debug for NativeFunction {
     }
 }
 
+impl PartialEq for NativeFunction {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.arity == other.arity
+    }
+}
+
 impl Function {
     pub(crate) fn new(name: &str, arity: usize) -> Self {
         Function {
             name: name.to_string(),
             arity,
+            chunk: Chunk::new(),
+        }
+    }
+
+    pub(crate) fn empty() -> Self {
+        Function {
+            name: String::new(),
+            arity: 0,
             chunk: Chunk::new(),
         }
     }
