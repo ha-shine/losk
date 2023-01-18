@@ -5,6 +5,7 @@
 - [ ] Currently, function parsing is a bit weird in a way that synchronisation is not skipped to the end of the block
       if an error is found, but the parsing stop in the middle of the function. Try parsing an error function and see
       if the synchronisation makes sense.
+- [ ] Explore "closure conversion" or "lambda lifting" for faster closures.
 
 # Challenges
 

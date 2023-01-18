@@ -181,7 +181,7 @@ impl<'a> VM<'a> {
 
         // The main function needs to be pushed onto the objects first because doing that will
         // send the object to the heap and the pointer created prior will be invalidated.
-        let mut frames: [CallFrame; FRAMES_MAX] = array_init::array_init(|i| CallFrame::default());
+        let mut frames: [CallFrame; FRAMES_MAX] = array_init::array_init(|_| CallFrame::default());
         let mut stack = Vec::with_capacity(DEFAULT_STACK);
         stack.push(StackValue::Obj(main));
         frames[0] = CallFrame {

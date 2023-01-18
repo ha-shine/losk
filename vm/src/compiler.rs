@@ -1,11 +1,25 @@
 use crate::chunk::Instruction;
 use crate::error::{CompilerResult, Error};
 use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
-use crate::object::Function;
 use crate::value::Value;
+use crate::Function;
 use losk_core::{Token, TokenStream, Type};
 
 pub struct Compiler;
+
+struct LocalValue {
+    index: usize,
+}
+struct UpValue {
+    index: usize,
+    is_local: bool,
+}
+
+enum LocalResolution {
+    Local(LocalValue),
+    UpValue(UpValue),
+    Global,
+}
 
 #[derive(Copy, Clone)]
 enum Precedence {
@@ -67,8 +81,8 @@ struct Local {
     depth: isize,
 }
 
-struct Context<'a> {
-    stream: TokenStream<'a>,
+struct Context<'token> {
+    stream: TokenStream<'token>,
     fun: Function,
 
     curr: Option<Token>,
@@ -86,18 +100,19 @@ struct Context<'a> {
     scope_depth: isize,
 
     ftype: FunctionType,
+    enclosing: Option<Box<Context<'token>>>,
 }
 
-type ParseFn<'a> = fn(&mut Context<'a>, bool) -> CompilerResult<()>;
+type ParseFn<'token> = fn(&mut Context<'token>, bool) -> CompilerResult<()>;
 
-struct ParseRule<'a>(Option<ParseFn<'a>>, Option<ParseFn<'a>>, Precedence);
+struct ParseRule<'token>(Option<ParseFn<'token>>, Option<ParseFn<'token>>, Precedence);
 
-impl<'a> ParseRule<'a> {
-    fn prefix(&self) -> Option<ParseFn<'a>> {
+impl<'token, 'context> ParseRule<'token> {
+    fn prefix(&self) -> Option<ParseFn<'token>> {
         self.0
     }
 
-    fn infix(&self) -> Option<ParseFn<'a>> {
+    fn infix(&self) -> Option<ParseFn<'token>> {
         self.1
     }
 
@@ -106,7 +121,7 @@ impl<'a> ParseRule<'a> {
     }
 }
 
-impl<'a> Context<'a> {
+impl<'token> Context<'token> {
     const STACK_SIZE: usize = u8::MAX as usize + 1;
 
     // A Pratt parser's table, where each row map to token type as index. The first column
@@ -117,7 +132,7 @@ impl<'a> Context<'a> {
     // operators are the same.
     // I am not sure whether using this as a const is the best idea since the const in Rust is
     // like `#define` and the code is copied to every usage.
-    const PARSE_RULES: [ParseRule<'a>; 39] = [
+    const PARSE_RULES: [ParseRule<'token>; 39] = [
         ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call), // LeftParen
         ParseRule(None, None, Precedence::None),                             // RightParen
         ParseRule(None, None, Precedence::None),                             // LeftBrace
@@ -159,7 +174,11 @@ impl<'a> Context<'a> {
         ParseRule(None, None, Precedence::None),                             // Error
     ];
 
-    fn new(stream: TokenStream<'a>, ftype: FunctionType) -> Self {
+    fn new(
+        stream: TokenStream<'token>,
+        ftype: FunctionType,
+        enclosing: Option<Box<Context<'token>>>,
+    ) -> Self {
         Context {
             stream,
             fun: Function::new("<script>", 0),
@@ -173,13 +192,14 @@ impl<'a> Context<'a> {
             scope_depth: 0,
 
             ftype,
+            enclosing,
         }
     }
 
     // Instead of having this function inside the context, this context should be passed mutably through
     // compiler's methods. This would make some of the multiple borrows restriction easier.
-    fn compiled(stream: TokenStream<'a>, ftype: FunctionType) -> Self {
-        let mut ctx = Context::new(stream, ftype);
+    fn compiled(stream: TokenStream<'token>, ftype: FunctionType) -> Self {
+        let mut ctx = Context::new(stream, ftype, None);
         ctx.compile();
         ctx
     }
@@ -464,26 +484,32 @@ impl<'a> Context<'a> {
     // `compile` method will branch into the correct parsing method depending on the type.
     fn function(&mut self, ftype: FunctionType) -> CompilerResult<()> {
         let stream = std::mem::replace(&mut self.stream, TokenStream::new(""));
-        let mut fun_ctx = Self::new(stream, ftype);
-        fun_ctx.prev = self.prev.take();
-        fun_ctx.curr = self.curr.take();
-        fun_ctx.compile();
+        let prev = self.prev.take();
+        let curr = self.curr.take();
 
-        // Replace the stream again
-        let _ = std::mem::replace(&mut self.stream, fun_ctx.stream);
-        self.prev = fun_ctx.prev;
-        self.curr = fun_ctx.curr;
+        // Replace self with a new context, which means I need to push the new 'ctx` as the parent
+        // for new `self`.
+        let ctx = std::mem::replace(self, Context::new(stream, ftype, None));
+        self.prev = prev;
+        self.curr = curr;
+        self.enclosing = Some(Box::new(ctx));
+        self.compile();
 
-        if !fun_ctx.errs.is_empty() {
-            self.errs.append(&mut fun_ctx.errs);
+        // Now previous self is in here and self contains the compiled function currently
+        let mut prev = self.enclosing.take().unwrap();
+        prev.prev = self.prev.take();
+        prev.curr = self.curr.take();
+
+        // Now funct is the compiled function, woosh
+        let mut funct = std::mem::replace(self, *prev);
+        self.stream = funct.stream;
+
+        if !funct.errs.is_empty() {
+            self.errs.append(&mut funct.errs);
             Err(self.error("Error while parsing function"))
         } else {
-            let fun_const = self
-                .fun
-                .chunk
-                .make_constant(Value::Fun(fun_ctx.fun))
-                .unwrap();
-            self.add_instruction(Instruction::Constant(fun_const));
+            let funct_const = self.fun.chunk.make_constant(Value::Fun(funct.fun)).unwrap();
+            self.add_instruction(Instruction::Constant(funct_const));
             Ok(())
         }
     }
@@ -647,20 +673,19 @@ impl<'a> Context<'a> {
 
         let name = prev.lexeme.clone();
         let line = prev.line;
-        let (set_op, get_op) = match self.resolve_local(&name) {
-            // The local variable cannot be resolved locally, so this variable must be a global
-            // variable.
-            Ok(-1) => {
+        let (set_op, get_op) = match self.resolve_variable(&name) {
+            Ok(LocalResolution::Global) => {
                 let constant = self.identifier_constant(name);
                 (
                     Instruction::SetGlobal(constant),
                     Instruction::GetGlobal(constant),
                 )
             }
-            Ok(arg) => (
-                Instruction::SetLocal(StackOffset { index: arg as u8 }),
-                Instruction::GetLocal(StackOffset { index: arg as u8 }),
+            Ok(LocalResolution::Local(LocalValue { index })) => (
+                Instruction::SetLocal(StackOffset { index: index as u8 }),
+                Instruction::GetLocal(StackOffset { index: index as u8 }),
             ),
+            Ok(LocalResolution::UpValue(UpValue { index, is_local })) => todo!(),
             Err(err) => {
                 return Err(err);
             }
@@ -763,18 +788,46 @@ impl<'a> Context<'a> {
         }
     }
 
-    fn resolve_local(&mut self, name: &str) -> CompilerResult<isize> {
+    // Resolve the given variable by traversing through all scopes.
+    //   - If there is no enclosing scope, this is the global scope so the variable is a global variable.
+    //   - If the variable can be resolved locally by walking outward from current scope, it's a
+    //     local variable. Note that the scope here means a block of statements, not a function
+    //     or class.
+    //   - Variables that are found across context boundaries are upvalues.
+    fn resolve_variable(&mut self, name: &str) -> CompilerResult<LocalResolution> {
+        if let Some(val) = self.resolve_local(name)? {
+            return Ok(LocalResolution::Local(val));
+        }
+
+        // Can't be found in local, and I need to check the parent function if this could be an
+        // upvalue. If there are no parents, the variable must be global.
+        if self.enclosing.is_none() {
+            return Ok(LocalResolution::Global);
+        }
+
+        match self.resolve_local(name)? {
+            Some(val) => Ok(LocalResolution::Local(val)),
+            None => match self.enclosing.as_ref().unwrap().resolve_local(name)? {
+                Some(upval) => {
+                    todo!()
+                }
+                None => Ok(LocalResolution::Global),
+            },
+        }
+    }
+
+    fn resolve_local(&self, name: &str) -> CompilerResult<Option<LocalValue>> {
         for (idx, local) in self.locals.iter().rev().enumerate() {
             if local.name == name {
                 return if local.depth == -1 {
                     Err(self.error("Can't read local variable in its own initializer"))
                 } else {
-                    Ok(idx as isize)
+                    Ok(Some(LocalValue { index: idx }))
                 };
             }
         }
 
-        Ok(-1)
+        Ok(None)
     }
 
     fn identifier_constant(&mut self, name: String) -> Constant {
@@ -885,7 +938,7 @@ impl<'a> Context<'a> {
         self.curr.as_ref().unwrap().ty == ty
     }
 
-    fn error(&mut self, msg: &str) -> Error {
+    fn error(&self, msg: &str) -> Error {
         let line = if let Some(curr) = &self.curr {
             curr.line
         } else {
