@@ -7,7 +7,7 @@ use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 // The chunk store them in a constant pool which are referred by their index when the vm executes
 // the bytecode (which is the chunk).
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Value {
+pub(crate) enum ConstantValue {
     Double(f64),
     Bool(bool),
     Str(String),
@@ -15,91 +15,99 @@ pub(crate) enum Value {
     Nil,
 }
 
-impl Display for Value {
+impl Display for ConstantValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Value::Double(val) => write!(f, "{}", val),
-            Value::Bool(val) => write!(f, "{}", val),
-            Value::Str(val) => write!(f, "{}", val),
-            Value::Fun(fun) => write!(f, "<Function {}>", fun.name),
-            Value::Nil => write!(f, "nil"),
+            ConstantValue::Double(val) => write!(f, "{}", val),
+            ConstantValue::Bool(val) => write!(f, "{}", val),
+            ConstantValue::Str(val) => write!(f, "{}", val),
+            ConstantValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
+            ConstantValue::Nil => write!(f, "nil"),
         }
     }
 }
 
-impl Add for Value {
-    type Output = Result<Value, &'static str>;
+impl Add for ConstantValue {
+    type Output = Result<ConstantValue, &'static str>;
 
     fn add(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Double(lhs + rhs)),
+            (ConstantValue::Double(lhs), ConstantValue::Double(rhs)) => {
+                Ok(ConstantValue::Double(lhs + rhs))
+            }
             (_, _) => Err("Expect string or number operands for both."),
         }
     }
 }
 
-impl Sub for Value {
-    type Output = Result<Value, &'static str>;
+impl Sub for ConstantValue {
+    type Output = Result<ConstantValue, &'static str>;
 
     fn sub(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Double(lhs - rhs)),
+            (ConstantValue::Double(lhs), ConstantValue::Double(rhs)) => {
+                Ok(ConstantValue::Double(lhs - rhs))
+            }
             (_, _) => Err("Expect string or number operands for both."),
         }
     }
 }
 
-impl Mul for Value {
-    type Output = Result<Value, &'static str>;
+impl Mul for ConstantValue {
+    type Output = Result<ConstantValue, &'static str>;
 
     fn mul(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Double(lhs * rhs)),
+            (ConstantValue::Double(lhs), ConstantValue::Double(rhs)) => {
+                Ok(ConstantValue::Double(lhs * rhs))
+            }
             (_, _) => Err("Expect string or number operands for both."),
         }
     }
 }
 
-impl Div for Value {
-    type Output = Result<Value, &'static str>;
+impl Div for ConstantValue {
+    type Output = Result<ConstantValue, &'static str>;
 
     fn div(self, rhs: Self) -> Self::Output {
         match (self, rhs) {
-            (Value::Double(lhs), Value::Double(rhs)) => Ok(Value::Double(lhs / rhs)),
+            (ConstantValue::Double(lhs), ConstantValue::Double(rhs)) => {
+                Ok(ConstantValue::Double(lhs / rhs))
+            }
             (_, _) => Err("Expect string or number operands for both."),
         }
     }
 }
 
-impl Neg for Value {
-    type Output = Result<Value, &'static str>;
+impl Neg for ConstantValue {
+    type Output = Result<ConstantValue, &'static str>;
 
     fn neg(self) -> Self::Output {
         match self {
-            Value::Double(val) => Ok(Value::Double(-val)),
+            ConstantValue::Double(val) => Ok(ConstantValue::Double(-val)),
             _ => Err("Expect number operand."),
         }
     }
 }
 
-impl Not for Value {
-    type Output = Result<Value, &'static str>;
+impl Not for ConstantValue {
+    type Output = Result<ConstantValue, &'static str>;
 
     fn not(self) -> Self::Output {
         match self {
-            Value::Bool(val) => Ok(Value::Bool(!val)),
+            ConstantValue::Bool(val) => Ok(ConstantValue::Bool(!val)),
             _ => Err("Expect boolean operand."),
         }
     }
 }
 
-impl<'a> From<Literal> for Value {
+impl<'a> From<Literal> for ConstantValue {
     fn from(value: Literal) -> Self {
         match value {
-            Literal::Str(val) => Value::Str(val),
-            Literal::Num(val) => Value::Double(val),
-            Literal::Bool(val) => Value::Bool(val),
-            Literal::Nil => Value::Nil,
+            Literal::Str(val) => ConstantValue::Str(val),
+            Literal::Num(val) => ConstantValue::Double(val),
+            Literal::Bool(val) => ConstantValue::Bool(val),
+            Literal::Nil => ConstantValue::Nil,
         }
     }
 }

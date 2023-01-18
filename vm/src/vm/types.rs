@@ -5,7 +5,6 @@ use crate::Function;
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
-use std::ops::Deref;
 use std::rc::Rc;
 
 #[derive(Clone, PartialEq)]

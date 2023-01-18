@@ -1,5 +1,5 @@
 use crate::chunk::Chunk;
-use crate::value::Value;
+use crate::value::ConstantValue;
 use crate::vm::StackValue;
 use std::fmt::{Debug, Formatter};
 
@@ -10,7 +10,7 @@ pub struct Function {
     pub(crate) chunk: Chunk,
 }
 
-pub(super) type NativeFn = fn(&[StackValue]) -> Option<Value>;
+pub(super) type NativeFn = fn(&[StackValue]) -> Option<ConstantValue>;
 
 pub(super) struct NativeFunction {
     pub(super) name: String,
@@ -38,18 +38,14 @@ impl Function {
             chunk: Chunk::new(),
         }
     }
-
-    pub(crate) fn empty() -> Self {
-        Function {
-            name: String::new(),
-            arity: 0,
-            chunk: Chunk::new(),
-        }
-    }
 }
 
 impl NativeFunction {
-    pub(crate) fn new(name: &str, arity: usize, fun: fn(&[StackValue]) -> Option<Value>) -> Self {
+    pub(crate) fn new(
+        name: &str,
+        arity: usize,
+        fun: fn(&[StackValue]) -> Option<ConstantValue>,
+    ) -> Self {
         NativeFunction {
             name: name.to_string(),
             arity,

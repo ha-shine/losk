@@ -1,6 +1,6 @@
 use crate::chunk::{Constant, Instruction};
 use crate::compiler::*;
-use crate::value::Value;
+use crate::value::ConstantValue;
 use crate::{CompileError, Compiler, Function};
 use losk_core::{Token, TokenStream, Type};
 
@@ -101,7 +101,10 @@ impl<'token> Context<'token> {
     }
 
     pub(super) fn identifier_constant(&mut self, name: String) -> Constant {
-        self.fun.chunk.make_constant(Value::Str(name)).unwrap()
+        self.fun
+            .chunk
+            .make_constant(ConstantValue::Str(name))
+            .unwrap()
     }
 
     pub(super) fn define_variable(&mut self, constant: Constant, line: usize) {

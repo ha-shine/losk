@@ -2,7 +2,7 @@ mod context;
 
 use crate::chunk::*;
 use crate::compiler::context::*;
-use crate::value::Value;
+use crate::value::ConstantValue;
 use crate::Function;
 
 use losk_core::{TokenStream, Type};
@@ -477,7 +477,11 @@ impl Compiler {
             ctx.errs.append(&mut nested.errs);
             Err(ctx.error("Error while parsing function"))
         } else {
-            let nested_as_const = ctx.fun.chunk.make_constant(Value::Fun(nested.fun)).unwrap();
+            let nested_as_const = ctx
+                .fun
+                .chunk
+                .make_constant(ConstantValue::Fun(nested.fun))
+                .unwrap();
             ctx.add_instruction(Instruction::Constant(nested_as_const));
             Ok(())
         }
@@ -618,7 +622,7 @@ impl Compiler {
 
     fn number(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
-        let value = Value::from(prev.value.clone());
+        let value = ConstantValue::from(prev.value.clone());
         let constant = ctx.fun.chunk.make_constant(value).unwrap();
         ctx.add_instruction_from(Instruction::Constant(constant), prev.line);
         Ok(())
@@ -626,7 +630,7 @@ impl Compiler {
 
     fn string(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
-        let value = Value::from(prev.value.clone());
+        let value = ConstantValue::from(prev.value.clone());
         let constant = ctx.fun.chunk.make_constant(value).unwrap();
         ctx.add_instruction_from(Instruction::Constant(constant), prev.line);
         Ok(())

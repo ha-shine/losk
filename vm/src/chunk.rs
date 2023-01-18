@@ -1,4 +1,4 @@
-use crate::value::Value;
+use crate::value::ConstantValue;
 
 // These instructions need to be able to turn into opcodes (format unknown yet.)
 // And vice versa in the disassembler.
@@ -53,7 +53,7 @@ pub(crate) struct ArgCount(pub(crate) usize);
 pub(crate) struct Chunk {
     instructions: Vec<Instruction>,
     line_numbers: Vec<usize>,
-    constants: Vec<Value>,
+    constants: Vec<ConstantValue>,
 }
 
 impl Chunk {
@@ -75,7 +75,7 @@ impl Chunk {
         self.instructions.len() - 1
     }
 
-    pub(crate) fn make_constant(&mut self, value: Value) -> Result<Constant, &'static str> {
+    pub(crate) fn make_constant(&mut self, value: ConstantValue) -> Result<Constant, &'static str> {
         if self.constants.len() == u8::MAX as usize {
             return Err("too many constants in one chunk");
         }
@@ -111,7 +111,7 @@ impl Chunk {
         self.instructions.get(offset)
     }
 
-    pub(crate) fn get_constant(&self, index: usize) -> Option<&Value> {
+    pub(crate) fn get_constant(&self, index: usize) -> Option<&ConstantValue> {
         self.constants.get(index)
     }
 }

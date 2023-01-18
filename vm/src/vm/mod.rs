@@ -5,7 +5,7 @@ mod types;
 
 use crate::chunk::*;
 use crate::object::{Function, NativeFunction};
-use crate::value::Value;
+use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
 use intrusive_collections::LinkedList;
@@ -13,7 +13,6 @@ use native::clock;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
-use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
 const FRAMES_MAX: usize = 256;
@@ -111,7 +110,7 @@ impl<'a> VM<'a> {
                         .chunk
                         .get_constant(index as usize)
                     {
-                        Some(Value::Str(name)) => name,
+                        Some(ConstantValue::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
 
@@ -131,7 +130,7 @@ impl<'a> VM<'a> {
                         .chunk
                         .get_constant(index as usize)
                     {
-                        Some(Value::Str(val)) => val.clone(),
+                        Some(ConstantValue::Str(val)) => val.clone(),
                         _ => panic!("Unreachable"),
                     };
 
@@ -277,7 +276,7 @@ impl<'a> VM<'a> {
             .chunk
             .get_constant(constant.0 as usize)
         {
-            Some(Value::Str(name)) => name.clone(),
+            Some(ConstantValue::Str(name)) => name.clone(),
             _ => panic!("Unreachable"),
         };
 
@@ -290,18 +289,23 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn store_value(&mut self, value: Value) -> VmResult<()> {
+    fn store_value(&mut self, value: ConstantValue) -> VmResult<()> {
         match value {
-            Value::Double(val) => self.push(StackValue::Num(val)),
-            Value::Bool(val) => self.push(StackValue::Bool(val)),
-            Value::Str(val) => self.allocate(HeapValue::Str(val)),
-            Value::Fun(fun) => self.allocate(HeapValue::Fun(fun)),
-            Value::Nil => self.push(StackValue::Nil),
+            ConstantValue::Double(val) => self.push(StackValue::Num(val)),
+            ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
+            ConstantValue::Str(val) => self.allocate(HeapValue::Str(val)),
+            ConstantValue::Fun(fun) => self.allocate(HeapValue::Fun(fun)),
+            ConstantValue::Nil => self.push(StackValue::Nil),
         }
 
         Ok(())
     }
 
+    // The constant value is being cloned here, if the value is a function that means the chunk which
+    // can be a large object is being cloned too. This definitely needs to be revisited.
+    // An unsafe pointer would work here because the function will always be valid as the main
+    // script will always be living at the front of the objects.
+    // TODO
     fn execute_constant(&mut self, con: Constant) -> VmResult<()> {
         let constant = self
             .current_frame()
