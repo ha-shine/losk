@@ -10,12 +10,12 @@ pub struct Function {
     pub(crate) chunk: Chunk,
 }
 
-pub(crate) type NativeFn = fn(&[StackValue]) -> Option<Value>;
+pub(super) type NativeFn = fn(&[StackValue]) -> Option<Value>;
 
-pub(crate) struct NativeFunction {
-    pub(crate) name: String,
-    pub(crate) arity: usize,
-    pub(crate) fun: NativeFn,
+pub(super) struct NativeFunction {
+    pub(super) name: String,
+    pub(super) arity: usize,
+    pub(super) fun: NativeFn,
 }
 
 impl Debug for NativeFunction {

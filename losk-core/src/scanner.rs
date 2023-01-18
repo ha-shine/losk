@@ -25,6 +25,7 @@ impl Scanner {
         "while" => Type::While,
     };
 
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Scanner
     }

@@ -1,4 +1,3 @@
-use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
 use crate::value::Value;
 
 // These instructions need to be able to turn into opcodes (format unknown yet.)
@@ -38,6 +37,18 @@ pub(crate) enum Instruction {
     Return,
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct Constant(pub(crate) u8);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct StackOffset(pub(crate) u8);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct JumpDist(pub(crate) usize);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct ArgCount(pub(crate) usize);
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chunk {
     instructions: Vec<Instruction>,
@@ -72,16 +83,16 @@ impl Chunk {
         self.constants.push(value);
 
         let index = (self.constants.len() as u8) - 1;
-        Ok(Constant { index })
+        Ok(Constant(index))
     }
 
     pub(crate) fn patch_jump(&mut self, index: usize) {
         let jump = self.instructions.len() - index;
         match self.instructions.get_mut(index) {
-            Some(Instruction::JumpIfFalse(JumpDist { dist })) => {
+            Some(Instruction::JumpIfFalse(JumpDist(dist))) => {
                 *dist = jump;
             }
-            Some(Instruction::Jump(JumpDist { dist })) => {
+            Some(Instruction::Jump(JumpDist(dist))) => {
                 *dist = jump;
             }
             _ => panic!("Unreachable!"),

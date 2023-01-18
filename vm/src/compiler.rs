@@ -1,13 +1,14 @@
-use crate::chunk::Instruction;
-use crate::error::{CompilerResult, Error};
-use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
+use crate::chunk::*;
 use crate::value::Value;
 use crate::Function;
+
 use losk_core::{Token, TokenStream, Type};
+use thiserror::Error;
 
 struct LocalValue {
     index: usize,
 }
+
 struct UpValue {
     index: usize,
     is_local: bool,
@@ -65,7 +66,7 @@ struct Context<'token> {
     curr: Option<Token>,
     prev: Option<Token>,
 
-    errs: Vec<Error>,
+    errs: Vec<CompileError>,
 
     // locals are used to resolve the declared variables into a stack frame location. `scope_depth`
     // is an auxiliary data that is used in this task, by tracking which level of scope the compiler
@@ -85,25 +86,42 @@ struct Local {
     depth: isize,
 }
 
-type ParseFn<'token> = fn(&Compiler, &mut Context<'token>, bool) -> CompilerResult<()>;
+pub struct Compiler;
 
-struct ParseRule<'token>(Option<ParseFn<'token>>, Option<ParseFn<'token>>, Precedence);
+type CompilationResult<T> = Result<T, CompileError>;
+type ParseFn = fn(&Compiler, &mut Context, bool) -> CompilationResult<()>;
 
-impl<'token> ParseRule<'token> {
-    fn prefix(&self) -> Option<ParseFn<'token>> {
-        self.0
-    }
+struct ParseRule {
+    prefix: Option<ParseFn>,
+    infix: Option<ParseFn>,
+    precedence: Precedence,
+}
 
-    fn infix(&self) -> Option<ParseFn<'token>> {
-        self.1
-    }
-
-    fn precedence(&self) -> &Precedence {
-        &self.2
+impl ParseRule {
+    fn new(prefix: Option<ParseFn>, infix: Option<ParseFn>, precedence: Precedence) -> Self {
+        ParseRule {
+            prefix,
+            infix,
+            precedence,
+        }
     }
 }
 
-pub struct Compiler;
+#[derive(Debug, Error, PartialEq)]
+#[error("[line {line:?}] compile error: {msg:?}")]
+pub struct CompileError {
+    line: usize,
+    msg: String,
+}
+
+impl CompileError {
+    fn new(line: usize, msg: &str) -> CompileError {
+        CompileError {
+            line,
+            msg: msg.to_string(),
+        }
+    }
+}
 
 impl Compiler {
     const STACK_SIZE: usize = u8::MAX as usize + 1;
@@ -115,47 +133,49 @@ impl Compiler {
     //
     // Precedence of the infix operators don't need to be tracked since the precedence of all prefix
     // operators are the same.
-    fn rule<'token>(ty: Type) -> ParseRule<'token> {
+    fn rule(ty: Type) -> ParseRule {
         match ty {
-            Type::LeftParen => ParseRule(Some(Self::grouping), Some(Self::call), Precedence::Call),
-            Type::RightParen => ParseRule(None, None, Precedence::None),
-            Type::LeftBrace => ParseRule(None, None, Precedence::None),
-            Type::RightBrace => ParseRule(None, None, Precedence::None),
-            Type::Comma => ParseRule(None, None, Precedence::None),
-            Type::Dot => ParseRule(None, None, Precedence::None),
-            Type::Minus => ParseRule(Some(Self::unary), Some(Self::binary), Precedence::Term),
-            Type::Plus => ParseRule(None, Some(Self::binary), Precedence::Term),
-            Type::SemiColon => ParseRule(None, None, Precedence::None),
-            Type::Slash => ParseRule(None, Some(Self::binary), Precedence::Factor),
-            Type::Star => ParseRule(None, Some(Self::binary), Precedence::Factor),
-            Type::Bang => ParseRule(Some(Self::unary), None, Precedence::None),
-            Type::BangEqual => ParseRule(None, Some(Self::binary), Precedence::Equality),
-            Type::Equal => ParseRule(None, None, Precedence::None),
-            Type::EqualEqual => ParseRule(None, Some(Self::binary), Precedence::Equality),
-            Type::Greater => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            Type::GreaterEqual => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            Type::Less => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            Type::LessEqual => ParseRule(None, Some(Self::binary), Precedence::Comparison),
-            Type::Identifier => ParseRule(Some(Self::variable), None, Precedence::None),
-            Type::String => ParseRule(Some(Self::string), None, Precedence::None),
-            Type::Number => ParseRule(Some(Self::number), None, Precedence::None),
-            Type::And => ParseRule(None, Some(Self::and), Precedence::And),
-            Type::Class => ParseRule(None, None, Precedence::None),
-            Type::Else => ParseRule(None, None, Precedence::None),
-            Type::True => ParseRule(Some(Self::literal), None, Precedence::None),
-            Type::False => ParseRule(Some(Self::literal), None, Precedence::None),
-            Type::For => ParseRule(None, None, Precedence::None),
-            Type::Fun => ParseRule(None, None, Precedence::None),
-            Type::If => ParseRule(None, None, Precedence::None),
-            Type::Nil => ParseRule(Some(Self::literal), None, Precedence::None),
-            Type::Or => ParseRule(None, Some(Self::or), Precedence::Or),
-            Type::Print => ParseRule(None, None, Precedence::None),
-            Type::Return => ParseRule(None, None, Precedence::None),
-            Type::Super => ParseRule(None, None, Precedence::None),
-            Type::This => ParseRule(None, None, Precedence::None),
-            Type::Var => ParseRule(None, None, Precedence::None),
-            Type::While => ParseRule(None, None, Precedence::None),
-            Type::Eof => ParseRule(None, None, Precedence::None),
+            Type::LeftParen => {
+                ParseRule::new(Some(Self::grouping), Some(Self::call), Precedence::Call)
+            }
+            Type::RightParen => ParseRule::new(None, None, Precedence::None),
+            Type::LeftBrace => ParseRule::new(None, None, Precedence::None),
+            Type::RightBrace => ParseRule::new(None, None, Precedence::None),
+            Type::Comma => ParseRule::new(None, None, Precedence::None),
+            Type::Dot => ParseRule::new(None, None, Precedence::None),
+            Type::Minus => ParseRule::new(Some(Self::unary), Some(Self::binary), Precedence::Term),
+            Type::Plus => ParseRule::new(None, Some(Self::binary), Precedence::Term),
+            Type::SemiColon => ParseRule::new(None, None, Precedence::None),
+            Type::Slash => ParseRule::new(None, Some(Self::binary), Precedence::Factor),
+            Type::Star => ParseRule::new(None, Some(Self::binary), Precedence::Factor),
+            Type::Bang => ParseRule::new(Some(Self::unary), None, Precedence::None),
+            Type::BangEqual => ParseRule::new(None, Some(Self::binary), Precedence::Equality),
+            Type::Equal => ParseRule::new(None, None, Precedence::None),
+            Type::EqualEqual => ParseRule::new(None, Some(Self::binary), Precedence::Equality),
+            Type::Greater => ParseRule::new(None, Some(Self::binary), Precedence::Comparison),
+            Type::GreaterEqual => ParseRule::new(None, Some(Self::binary), Precedence::Comparison),
+            Type::Less => ParseRule::new(None, Some(Self::binary), Precedence::Comparison),
+            Type::LessEqual => ParseRule::new(None, Some(Self::binary), Precedence::Comparison),
+            Type::Identifier => ParseRule::new(Some(Self::variable), None, Precedence::None),
+            Type::String => ParseRule::new(Some(Self::string), None, Precedence::None),
+            Type::Number => ParseRule::new(Some(Self::number), None, Precedence::None),
+            Type::And => ParseRule::new(None, Some(Self::and), Precedence::And),
+            Type::Class => ParseRule::new(None, None, Precedence::None),
+            Type::Else => ParseRule::new(None, None, Precedence::None),
+            Type::True => ParseRule::new(Some(Self::literal), None, Precedence::None),
+            Type::False => ParseRule::new(Some(Self::literal), None, Precedence::None),
+            Type::For => ParseRule::new(None, None, Precedence::None),
+            Type::Fun => ParseRule::new(None, None, Precedence::None),
+            Type::If => ParseRule::new(None, None, Precedence::None),
+            Type::Nil => ParseRule::new(Some(Self::literal), None, Precedence::None),
+            Type::Or => ParseRule::new(None, Some(Self::or), Precedence::Or),
+            Type::Print => ParseRule::new(None, None, Precedence::None),
+            Type::Return => ParseRule::new(None, None, Precedence::None),
+            Type::Super => ParseRule::new(None, None, Precedence::None),
+            Type::This => ParseRule::new(None, None, Precedence::None),
+            Type::Var => ParseRule::new(None, None, Precedence::None),
+            Type::While => ParseRule::new(None, None, Precedence::None),
+            Type::Eof => ParseRule::new(None, None, Precedence::None),
         }
     }
 
@@ -164,7 +184,7 @@ impl Compiler {
         Compiler
     }
 
-    pub fn compile(&self, stream: TokenStream) -> Result<Function, Vec<Error>> {
+    pub fn compile(&self, stream: TokenStream) -> Result<Function, Vec<CompileError>> {
         let mut ctx = Context::new(stream, FunctionType::Script, None);
         self.compile_context(&mut ctx);
 
@@ -213,7 +233,7 @@ impl Compiler {
         ctx.add_return();
     }
 
-    fn compile_function(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn compile_function(&self, ctx: &mut Context) -> CompilationResult<()> {
         ctx.fun.name = ctx.prev.as_ref().unwrap().lexeme.clone();
 
         ctx.begin_scope();
@@ -240,7 +260,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn declaration(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
         if ctx.match_type(Type::Var) {
             self.var_declaration(ctx)
         } else if ctx.match_type(Type::Fun) {
@@ -250,7 +270,7 @@ impl Compiler {
         }
     }
 
-    fn var_declaration(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn var_declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
         let constant = self.parse_variable(ctx, "Expect variable name.")?;
 
         if ctx.match_type(Type::Equal) {
@@ -264,7 +284,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn fun_declaration(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn fun_declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
         let global = self.parse_variable(ctx, "Expect function name")?;
         ctx.mark_initialized();
         self.function(ctx, FunctionType::Function)?;
@@ -272,7 +292,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         if ctx.match_type(Type::Print) {
             self.print_statement(ctx)?;
         } else if ctx.match_type(Type::If) {
@@ -294,14 +314,14 @@ impl Compiler {
         Ok(())
     }
 
-    fn print_statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn print_statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         self.expression(ctx)?;
         let line = ctx.consume(Type::SemiColon, "Expect ';' after value.")?;
         ctx.add_instruction_from(Instruction::Print, line);
         Ok(())
     }
 
-    fn return_statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn return_statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         if ctx.ftype == FunctionType::Script {
             return Err(ctx.error("Can't return from top-level code."));
         }
@@ -317,18 +337,17 @@ impl Compiler {
         Ok(())
     }
 
-    fn if_statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn if_statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         ctx.consume(Type::LeftParen, "Expect '(' after 'if'.")?;
         self.expression(ctx)?;
 
         let mut line = ctx.consume(Type::RightParen, "Expect ')' after condition.")?;
-        let then_jump =
-            ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        let then_jump = ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist(0)), line);
         ctx.add_instruction_from(Instruction::Pop, line);
         self.statement(ctx)?;
 
         line = ctx.prev.as_ref().unwrap().line;
-        let else_jump = ctx.add_instruction_from(Instruction::Jump(JumpDist { dist: 0 }), line);
+        let else_jump = ctx.add_instruction_from(Instruction::Jump(JumpDist(0)), line);
 
         // Patching jump, here the if statement has been parsed and the program will jump to this
         // place if the test condition is false. In short,
@@ -347,14 +366,13 @@ impl Compiler {
         Ok(())
     }
 
-    fn while_statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn while_statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         let loop_start = ctx.fun.chunk.in_count();
         ctx.consume(Type::LeftParen, "Expect '(' after while.")?;
         self.expression(ctx)?;
 
         let mut line = ctx.consume(Type::RightParen, "Expect ')' after condition.")?;
-        let exit_jump =
-            ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
+        let exit_jump = ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist(0)), line);
         ctx.add_instruction_from(Instruction::Pop, line);
         self.statement(ctx)?;
 
@@ -366,7 +384,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn for_statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn for_statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         // The for variable is scoped to the body, so a new scope is created.
         ctx.begin_scope();
         ctx.consume(Type::LeftParen, "Expect '(' after 'for'.")?;
@@ -388,16 +406,14 @@ impl Compiler {
             let line = ctx.consume(Type::SemiColon, "Expect ';' after loop condition.")?;
 
             // This jump will be patched to skip the block if the condition is false.
-            exit_jump = Some(
-                ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line),
-            );
+            exit_jump = Some(ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist(0)), line));
             ctx.add_instruction_from(Instruction::Pop, line); // pop the condition
         }
 
         // The third part, incrementing the variable (or any expression statement - without ";").
         // This will be run after every block.
         if !ctx.match_type(Type::RightParen) {
-            let body_jump = ctx.add_instruction(Instruction::Jump(JumpDist { dist: 0 }));
+            let body_jump = ctx.add_instruction(Instruction::Jump(JumpDist(0)));
             let increment_start = ctx.fun.chunk.in_count();
             self.expression(ctx)?;
             ctx.add_instruction(Instruction::Pop);
@@ -430,20 +446,20 @@ impl Compiler {
         Ok(())
     }
 
-    fn expression_statement(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn expression_statement(&self, ctx: &mut Context) -> CompilationResult<()> {
         self.expression(ctx)?;
         let line = ctx.consume(Type::SemiColon, "Expect ';' after expression.")?;
         ctx.add_instruction_from(Instruction::Pop, line);
         Ok(())
     }
 
-    fn expression(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn expression(&self, ctx: &mut Context) -> CompilationResult<()> {
         // Simply parse the expression with lowest precedence
         self.parse_precedence(ctx, Precedence::Assignment)?;
         Ok(())
     }
 
-    fn block(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn block(&self, ctx: &mut Context) -> CompilationResult<()> {
         while !ctx.check(Type::RightBrace) && !ctx.check(Type::Eof) {
             self.declaration(ctx)?;
         }
@@ -454,7 +470,7 @@ impl Compiler {
 
     // To parse a function, a new context is created and do the compilation as usual. The main
     // `compile` method will branch into the correct parsing method depending on the type.
-    fn function(&self, ctx: &mut Context, ftype: FunctionType) -> CompilerResult<()> {
+    fn function(&self, ctx: &mut Context, ftype: FunctionType) -> CompilationResult<()> {
         let stream = std::mem::replace(&mut ctx.stream, TokenStream::new(""));
         let prev = ctx.prev.take();
         let curr = ctx.curr.take();
@@ -486,13 +502,13 @@ impl Compiler {
         }
     }
 
-    fn grouping(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn grouping(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         self.expression(ctx)?;
         ctx.consume(Type::RightParen, "Expect ')' after expression.")?;
         Ok(())
     }
 
-    fn unary(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn unary(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let (ty, line) = {
             let prev = ctx.prev.as_ref().unwrap();
             (prev.ty, prev.line)
@@ -513,7 +529,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn binary(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn binary(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
         let ty = prev.ty;
         let line = prev.line;
@@ -524,7 +540,7 @@ impl Compiler {
         // When the compiler have consumed the "+" sign, it needs to parse the whole expression
         // "3 * 10" first instead of just "3", else the operation order will be incorrect according
         // to the precedence rule.
-        self.parse_precedence(ctx, rule.precedence().next())?;
+        self.parse_precedence(ctx, rule.precedence.next())?;
 
         match ty {
             Type::Plus => {
@@ -566,9 +582,9 @@ impl Compiler {
         Ok(())
     }
 
-    fn call(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn call(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let args = self.argument_list(ctx)?;
-        if args.count > 255 {
+        if args.0 > 255 {
             return Err(ctx.error("Can't have more than 255 parameters."));
         }
 
@@ -579,8 +595,8 @@ impl Compiler {
     // When this is called, the left-hand side expression has already been compiled. If that value
     // is false, leave that value on the stack and skip the whole expression. If not, pop that
     // value from the stack and evaluate the next expression.
-    fn and(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
-        let end_jump = ctx.add_instruction(Instruction::Jump(JumpDist { dist: 0 }));
+    fn and(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
+        let end_jump = ctx.add_instruction(Instruction::Jump(JumpDist(0)));
         ctx.add_instruction(Instruction::Pop);
         self.parse_precedence(ctx, Precedence::And)?;
         ctx.fun.chunk.patch_jump(end_jump);
@@ -590,11 +606,10 @@ impl Compiler {
     // For else, if the value is false, pop the value and continue with the next expression (here
     // the next expression starts after the unconditional jump that skips to the next instruction
     // after the or expression which is taken when the value is true).
-    fn or(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn or(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let line = ctx.prev.as_ref().unwrap().line;
-        let else_jump =
-            ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist { dist: 0 }), line);
-        let end_jump = ctx.add_instruction_from(Instruction::Jump(JumpDist { dist: 0 }), line);
+        let else_jump = ctx.add_instruction_from(Instruction::JumpIfFalse(JumpDist(0)), line);
+        let end_jump = ctx.add_instruction_from(Instruction::Jump(JumpDist(0)), line);
         ctx.fun.chunk.patch_jump(else_jump);
         ctx.add_instruction_from(Instruction::Pop, line);
         self.parse_precedence(ctx, Precedence::Or)?;
@@ -602,7 +617,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn literal(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn literal(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
         match prev.ty {
             Type::True => {
@@ -620,7 +635,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn number(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn number(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = ctx.fun.chunk.make_constant(value).unwrap();
@@ -628,7 +643,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn string(&self, ctx: &mut Context, _: bool) -> CompilerResult<()> {
+    fn string(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
         let value = Value::from(prev.value.clone());
         let constant = ctx.fun.chunk.make_constant(value).unwrap();
@@ -636,11 +651,11 @@ impl Compiler {
         Ok(())
     }
 
-    fn variable(&self, ctx: &mut Context, can_assign: bool) -> CompilerResult<()> {
+    fn variable(&self, ctx: &mut Context, can_assign: bool) -> CompilationResult<()> {
         self.named_variable(ctx, can_assign)
     }
 
-    fn named_variable(&self, ctx: &mut Context, can_assign: bool) -> CompilerResult<()> {
+    fn named_variable(&self, ctx: &mut Context, can_assign: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
 
         let name = prev.lexeme.clone();
@@ -654,8 +669,8 @@ impl Compiler {
                 )
             }
             Ok(LocalResolution::Local(LocalValue { index })) => (
-                Instruction::SetLocal(StackOffset { index: index as u8 }),
-                Instruction::GetLocal(StackOffset { index: index as u8 }),
+                Instruction::SetLocal(StackOffset(index as u8)),
+                Instruction::GetLocal(StackOffset(index as u8)),
             ),
             Ok(LocalResolution::UpValue(UpValue { index, is_local })) => todo!(),
             Err(err) => {
@@ -679,7 +694,7 @@ impl Compiler {
     // After parsing with prefix function, check if next token's infix operation precedence is
     // higher than the current precedence defined. As long as the next token's infix precedence
     // is higher, the parser will keep parsing those expression until none is left.
-    fn parse_precedence(&self, ctx: &mut Context, precedence: Precedence) -> CompilerResult<()> {
+    fn parse_precedence(&self, ctx: &mut Context, precedence: Precedence) -> CompilationResult<()> {
         ctx.advance();
         let prev = ctx.prev.as_ref().unwrap();
         let rule = Self::rule(prev.ty);
@@ -698,19 +713,17 @@ impl Compiler {
         // to assign a non-assignable expression and this should be notified to the user.
         let can_assign = precedence as usize <= Precedence::Assignment as usize;
 
-        match rule.prefix() {
+        match rule.prefix {
             Some(prefix) => prefix(self, ctx, can_assign)?,
             None => {
                 return Err(ctx.error("Expect expression."));
             }
         }
 
-        while precedence as usize
-            <= *Self::rule(ctx.curr.as_ref().unwrap().ty).precedence() as usize
-        {
+        while precedence as usize <= Self::rule(ctx.curr.as_ref().unwrap().ty).precedence as usize {
             ctx.advance();
             let rule = Self::rule(ctx.prev.as_ref().unwrap().ty);
-            (rule.infix().unwrap())(self, ctx, false)?;
+            (rule.infix.unwrap())(self, ctx, false)?;
         }
 
         if can_assign && ctx.match_type(Type::Equal) {
@@ -720,7 +733,7 @@ impl Compiler {
         }
     }
 
-    fn parse_variable(&self, ctx: &mut Context, msg: &str) -> CompilerResult<Constant> {
+    fn parse_variable(&self, ctx: &mut Context, msg: &str) -> CompilationResult<Constant> {
         ctx.consume(Type::Identifier, msg)?;
         let prev = ctx.prev.as_ref().unwrap();
         let name = prev.lexeme.clone();
@@ -729,7 +742,7 @@ impl Compiler {
         Ok(ctx.identifier_constant(name))
     }
 
-    fn declare_variable(&self, ctx: &mut Context) -> CompilerResult<()> {
+    fn declare_variable(&self, ctx: &mut Context) -> CompilationResult<()> {
         if ctx.scope_depth == 0 {
             return Ok(());
         }
@@ -751,7 +764,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn argument_list(&self, ctx: &mut Context) -> CompilerResult<ArgCount> {
+    fn argument_list(&self, ctx: &mut Context) -> CompilationResult<ArgCount> {
         let mut count = 0;
         if !ctx.check(Type::RightParen) {
             loop {
@@ -765,7 +778,7 @@ impl Compiler {
         }
 
         ctx.consume(Type::RightParen, "Expect ')' after arguments.")?;
-        Ok(ArgCount { count })
+        Ok(ArgCount(count))
     }
 
     // Synchronize the token stream if an error is found during compilation, and the course of action
@@ -816,7 +829,7 @@ impl<'token> Context<'token> {
         }
     }
 
-    fn add_local(&mut self, name: String) -> CompilerResult<()> {
+    fn add_local(&mut self, name: String) -> CompilationResult<()> {
         if self.locals.len() == Compiler::STACK_SIZE {
             Err(self.error("Too many local variables in function."))
         } else {
@@ -831,7 +844,7 @@ impl<'token> Context<'token> {
     //     local variable. Note that the scope here means a block of statements, not a function
     //     or class.
     //   - Variables that are found across context boundaries are upvalues.
-    fn resolve_variable(&mut self, name: &str) -> CompilerResult<LocalResolution> {
+    fn resolve_variable(&mut self, name: &str) -> CompilationResult<LocalResolution> {
         if let Some(val) = self.resolve_local(name)? {
             return Ok(LocalResolution::Local(val));
         }
@@ -853,7 +866,7 @@ impl<'token> Context<'token> {
         }
     }
 
-    fn resolve_local(&self, name: &str) -> CompilerResult<Option<LocalValue>> {
+    fn resolve_local(&self, name: &str) -> CompilationResult<Option<LocalValue>> {
         for (idx, local) in self.locals.iter().rev().enumerate() {
             if local.name == name {
                 return if local.depth == -1 {
@@ -929,7 +942,7 @@ impl<'token> Context<'token> {
     // Consume will return the line number of the consumed token for ease.
     // Maybe I should return the reference to the token as a result instead of just the line number.
     // This way, I can bubble up the result back to the main compile function too.
-    fn consume(&mut self, ty: Type, msg: &str) -> CompilerResult<usize> {
+    fn consume(&mut self, ty: Type, msg: &str) -> CompilationResult<usize> {
         match &self.curr {
             Some(token) if token.ty == ty => {
                 let line = token.line;
@@ -951,20 +964,20 @@ impl<'token> Context<'token> {
 
     fn emit_loop(&mut self, start: usize, line: usize) {
         let dist = self.fun.chunk.in_count() - start;
-        self.add_instruction_from(Instruction::Loop(JumpDist { dist }), line);
+        self.add_instruction_from(Instruction::Loop(JumpDist(dist)), line);
     }
 
     fn check(&self, ty: Type) -> bool {
         self.curr.as_ref().unwrap().ty == ty
     }
 
-    fn error(&self, msg: &str) -> Error {
+    fn error(&self, msg: &str) -> CompileError {
         let line = if let Some(curr) = &self.curr {
             curr.line
         } else {
             0
         };
 
-        Error::compile(line, msg)
+        CompileError::new(line, msg)
     }
 }

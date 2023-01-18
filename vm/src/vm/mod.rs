@@ -1,143 +1,22 @@
-use crate::chunk::Instruction;
-use crate::error::{Error, StackData, StackTrace};
-use crate::instruction::{ArgCount, Constant, JumpDist, StackOffset};
-use crate::native::clock;
+mod error;
+pub mod native;
+pub mod object;
+mod types;
+
+use crate::chunk::*;
 use crate::object::{Function, NativeFunction};
 use crate::value::Value;
-use crate::VmResult;
-use intrusive_collections::{intrusive_adapter, LinkedList, LinkedListLink};
+use crate::vm::error::*;
+use crate::vm::types::*;
+use intrusive_collections::LinkedList;
+use native::clock;
 use std::collections::HashMap;
 use std::fmt;
-use std::fmt::{Debug, Display, Formatter};
 use std::io::Write;
-use std::ops::Deref;
 use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
 const FRAMES_MAX: usize = 256;
-
-#[derive(Clone, PartialEq)]
-pub(crate) enum StackValue {
-    Num(f64),
-    Bool(bool),
-
-    // This is not idiomatic, but for the sake of following the book this is fine for now.
-    // Plus doing this as reference means there will be a sea of lifetime indicators in here.
-    // This probably should be refactored out into its own RefCell-ish type, but this will suffice
-    // for now.
-    Obj(Rc<Object>),
-    Nil,
-}
-
-impl Display for StackValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            StackValue::Num(val) => write!(f, "{}", val),
-            StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{}", val.value),
-            StackValue::Nil => write!(f, "nil"),
-        }
-    }
-}
-
-impl Debug for StackValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            StackValue::Num(val) => write!(f, "{}", val),
-            StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{:?} -> {}", val, val.value),
-            StackValue::Nil => write!(f, "nil"),
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub(crate) enum HeapValue {
-    Str(String),
-    Fun(Rc<Function>),
-    NativeFunction(NativeFunction),
-}
-
-impl Display for HeapValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            HeapValue::Str(val) => write!(f, "{}", val),
-            HeapValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
-            HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub(crate) struct Object {
-    link: LinkedListLink,
-    value: HeapValue,
-}
-
-impl PartialEq for Object {
-    fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
-    }
-}
-
-intrusive_adapter!(ListAdapter = Rc<Object>: Object { link: LinkedListLink });
-
-impl Object {
-    fn new(val: HeapValue) -> Rc<Object> {
-        Rc::new(Object {
-            link: LinkedListLink::new(),
-            value: val,
-        })
-    }
-}
-
-// CallFrame represents a frame of function that is pushed onto the call stack everytime a function
-// is called. This keeps an offset of value stack pointer in `slots` which marks the start of
-// this call and every value this frame owns needs to be referenced using index `slots + offset`.
-// Copy-derived to initialise an array of frames with default values when the VM starts.
-#[derive(Clone)]
-struct CallFrame {
-    // Unsafe pointer is used for performance, but the actual function will reside in the VM's
-    // main function
-    fun: Rc<Function>,
-
-    ip: usize,
-    slots: usize,
-}
-
-impl Deref for CallFrame {
-    type Target = Function;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fun
-    }
-}
-
-impl CallFrame {
-    fn next(&mut self) -> Option<&Instruction> {
-        let result = self.fun.chunk.get_instruction(self.ip);
-        self.ip += 1;
-        result
-    }
-
-    fn jump(&mut self, offset: usize) {
-        self.ip += offset;
-    }
-
-    fn loop_(&mut self, offset: usize) {
-        self.ip -= offset;
-    }
-}
-
-impl Default for CallFrame {
-    fn default() -> Self {
-        CallFrame {
-            fun: Rc::new(Function::empty()),
-            ip: 0,
-            slots: 0,
-        }
-    }
-}
 
 pub struct VM<'a> {
     // The stack as a growable vector. In textbook, this is represented by an array and a stack
@@ -164,13 +43,6 @@ pub struct VM<'a> {
     // The VM will write the output strings into this stdout
     stdout: &'a mut dyn Write,
 }
-
-pub(crate) enum StackOrHeap {
-    Stack(StackValue),
-    Heap(HeapValue),
-}
-
-type OpResult = Result<StackOrHeap, &'static str>;
 
 impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
@@ -233,7 +105,7 @@ impl<'a> VM<'a> {
                 Instruction::PopN(n) => {
                     self.pop_n(n);
                 }
-                Instruction::GetGlobal(Constant { index }) => {
+                Instruction::GetGlobal(Constant(index)) => {
                     let name = match self.current_frame().chunk.get_constant(index as usize) {
                         Some(Value::Str(name)) => name,
                         _ => panic!("Unreachable"),
@@ -246,7 +118,7 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
-                Instruction::DefineGlobal(Constant { index }) => {
+                Instruction::DefineGlobal(Constant(index)) => {
                     // The global name is stored as a constant value in the constant pool, read
                     // from the pool to get the name.
                     let name = match self.current_frame().chunk.get_constant(index as usize) {
@@ -261,12 +133,12 @@ impl<'a> VM<'a> {
 
                 // Additional 1 is added because the stack[0] is the information for current
                 // call frame
-                Instruction::GetLocal(StackOffset { index }) => {
+                Instruction::GetLocal(StackOffset(index)) => {
                     let index = self.current_frame().slots + index as usize + 1;
                     let val = self.stack[index].clone();
                     self.push(val);
                 }
-                Instruction::SetLocal(StackOffset { index }) => {
+                Instruction::SetLocal(StackOffset(index)) => {
                     let index = self.current_frame().slots + index as usize + 1;
                     self.stack[index] = self.stack.last().unwrap().clone();
                 }
@@ -288,7 +160,7 @@ impl<'a> VM<'a> {
                     let val = self.pop();
                     writeln!(self.stdout, "{}", val).unwrap();
                 }
-                Instruction::JumpIfFalse(JumpDist { dist }) => {
+                Instruction::JumpIfFalse(JumpDist(dist)) => {
                     // The pointer has already been incremented by 1 before this match statement,
                     // so need to subtract 1 from jump distance.
                     match self.peek() {
@@ -304,16 +176,16 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
-                Instruction::Jump(JumpDist { dist }) => {
+                Instruction::Jump(JumpDist(dist)) => {
                     // Same ordeal as above here.
                     self.current_frame_mut().jump(dist - 1)
                 }
-                Instruction::Loop(JumpDist { dist }) => {
+                Instruction::Loop(JumpDist(dist)) => {
                     // Add 1 to distance because the instruction pointer has already been incremented
                     // by 1, so it's pointing to the instruction one after this.
                     self.current_frame_mut().loop_(dist + 1)
                 }
-                Instruction::Call(ArgCount { count }) => {
+                Instruction::Call(ArgCount(count)) => {
                     if self.frame_count == FRAMES_MAX {
                         return Err(self.error(format_args!("Stack overflow.")));
                     }
@@ -390,11 +262,7 @@ impl<'a> VM<'a> {
 
         // It's a bit wasteful to clone the constant name everytime it's assigned, but I want to
         // avoid unsafe code in this before profiling.
-        let name = match self
-            .current_frame()
-            .chunk
-            .get_constant(constant.index as usize)
-        {
+        let name = match self.current_frame().chunk.get_constant(constant.0 as usize) {
             Some(Value::Str(name)) => name.clone(),
             _ => panic!("Unreachable"),
         };
@@ -424,7 +292,7 @@ impl<'a> VM<'a> {
         let constant = self
             .current_frame()
             .chunk
-            .get_constant(con.index as usize)
+            .get_constant(con.0 as usize)
             .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
         self.store_value(constant.clone())
     }
@@ -576,7 +444,7 @@ impl<'a> VM<'a> {
         &mut self.frames[self.frame_count - 1]
     }
 
-    fn error(&self, args: fmt::Arguments) -> Error {
+    fn error(&self, args: fmt::Arguments) -> Box<RuntimeError> {
         let data: Vec<_> = (0..self.frame_count)
             .rev()
             .map(|idx| {
@@ -587,14 +455,14 @@ impl<'a> VM<'a> {
             })
             .collect();
 
-        Error::runtime(args, StackTrace(data))
+        RuntimeError::new(args, StackTrace(data))
     }
 }
 
+// These probably should be integration tests
 #[cfg(test)]
 mod tests {
     use crate::compiler::Compiler;
-    use crate::error::Error;
     use crate::vm::VM;
     use losk_core::Scanner;
     use std::str;
@@ -611,8 +479,8 @@ mod tests {
         let result = vm.run();
 
         match (result, err) {
-            (Err(out @ Error::RuntimeError { .. }), Some(err)) => assert_eq!(err, out.to_string()),
-            (Err(out @ Error::RuntimeError { .. }), None) => {
+            (Err(out), Some(err)) => assert_eq!(err, out.to_string()),
+            (Err(out), None) => {
                 panic!("Not expecting any error, found '{}'", out)
             }
             (Ok(_), Some(err)) => panic!("Expecting an error '{}', found none.", err),
@@ -630,44 +498,44 @@ mod tests {
     fn test_programs() {
         let tests = [
             (
-                include_str!("../../data/print_expression.lox"),
-                include_str!("../../data/print_expression.lox.expected"),
+                include_str!("../../../data/print_expression.lox"),
+                include_str!("../../../data/print_expression.lox.expected"),
             ),
             (
-                include_str!("../../data/var_assignment.lox"),
-                include_str!("../../data/var_assignment.lox.expected"),
+                include_str!("../../../data/var_assignment.lox"),
+                include_str!("../../../data/var_assignment.lox.expected"),
             ),
             (
-                include_str!("../../data/block.lox"),
-                include_str!("../../data/block.lox.expected"),
+                include_str!("../../../data/block.lox"),
+                include_str!("../../../data/block.lox.expected"),
             ),
             (
-                include_str!("../../data/if_else.lox"),
-                include_str!("../../data/if_else.lox.expected"),
+                include_str!("../../../data/if_else.lox"),
+                include_str!("../../../data/if_else.lox.expected"),
             ),
             (
-                include_str!("../../data/while.lox"),
-                include_str!("../../data/while.lox.expected"),
+                include_str!("../../../data/while.lox"),
+                include_str!("../../../data/while.lox.expected"),
             ),
             (
-                include_str!("../../data/for.lox"),
-                include_str!("../../data/for.lox.expected"),
+                include_str!("../../../data/for.lox"),
+                include_str!("../../../data/for.lox.expected"),
             ),
             (
-                include_str!("../../data/print_function.lox"),
-                include_str!("../../data/print_function.lox.expected"),
+                include_str!("../../../data/print_function.lox"),
+                include_str!("../../../data/print_function.lox.expected"),
             ),
             (
-                include_str!("../../data/fun_no_return.lox"),
-                include_str!("../../data/fun_no_return.lox.expected"),
+                include_str!("../../../data/fun_no_return.lox"),
+                include_str!("../../../data/fun_no_return.lox.expected"),
             ),
             (
-                include_str!("../../data/fun_nil_return_print.lox"),
-                include_str!("../../data/fun_nil_return_print.lox.expected"),
+                include_str!("../../../data/fun_nil_return_print.lox"),
+                include_str!("../../../data/fun_nil_return_print.lox.expected"),
             ),
             (
-                include_str!("../../data/fib.lox"),
-                include_str!("../../data/fib.lox.expected"),
+                include_str!("../../../data/fib.lox"),
+                include_str!("../../../data/fib.lox.expected"),
             ),
         ];
 
@@ -678,8 +546,8 @@ mod tests {
 
     #[test]
     fn test_stack_trace() {
-        let src = include_str!("../../data/function_stack_trace.lox");
-        let exp = include_str!("../../data/function_stack_trace.lox.expected");
+        let src = include_str!("../../../data/function_stack_trace.lox");
+        let exp = include_str!("../../../data/function_stack_trace.lox.expected");
 
         test_program(src, None, Some(exp));
     }
