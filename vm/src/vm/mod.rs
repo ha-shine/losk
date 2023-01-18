@@ -46,8 +46,7 @@ pub struct VM<'a> {
 
 impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
-        let main_ptr = Rc::new(main);
-        let main = Object::new(HeapValue::Fun(main_ptr.clone()));
+        let main = Object::new(HeapValue::Fun(main));
         let mut objects = LinkedList::new(ListAdapter::new());
         objects.push_front(main.clone());
 
@@ -55,9 +54,9 @@ impl<'a> VM<'a> {
         // send the object to the heap and the pointer created prior will be invalidated.
         let mut frames: [CallFrame; FRAMES_MAX] = array_init::array_init(|_| CallFrame::default());
         let mut stack = Vec::with_capacity(DEFAULT_STACK);
-        stack.push(StackValue::Obj(main));
+        stack.push(StackValue::Obj(main.clone()));
         frames[0] = CallFrame {
-            fun: main_ptr,
+            fun: main,
             ip: 0,
             slots: 0,
         };
@@ -106,7 +105,12 @@ impl<'a> VM<'a> {
                     self.pop_n(n);
                 }
                 Instruction::GetGlobal(Constant(index)) => {
-                    let name = match self.current_frame().chunk.get_constant(index as usize) {
+                    let name = match self
+                        .current_frame()
+                        .fun()
+                        .chunk
+                        .get_constant(index as usize)
+                    {
                         Some(Value::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -121,7 +125,12 @@ impl<'a> VM<'a> {
                 Instruction::DefineGlobal(Constant(index)) => {
                     // The global name is stored as a constant value in the constant pool, read
                     // from the pool to get the name.
-                    let name = match self.current_frame().chunk.get_constant(index as usize) {
+                    let name = match self
+                        .current_frame()
+                        .fun()
+                        .chunk
+                        .get_constant(index as usize)
+                    {
                         Some(Value::Str(val)) => val.clone(),
                         _ => panic!("Unreachable"),
                     };
@@ -203,7 +212,7 @@ impl<'a> VM<'a> {
                                 }
 
                                 self.frames[self.frame_count] = CallFrame {
-                                    fun: fun.clone(),
+                                    fun: obj.clone(),
                                     ip: 0,
                                     slots: self.stack.len() - count - 1,
                                 };
@@ -262,7 +271,12 @@ impl<'a> VM<'a> {
 
         // It's a bit wasteful to clone the constant name everytime it's assigned, but I want to
         // avoid unsafe code in this before profiling.
-        let name = match self.current_frame().chunk.get_constant(constant.0 as usize) {
+        let name = match self
+            .current_frame()
+            .fun()
+            .chunk
+            .get_constant(constant.0 as usize)
+        {
             Some(Value::Str(name)) => name.clone(),
             _ => panic!("Unreachable"),
         };
@@ -281,7 +295,7 @@ impl<'a> VM<'a> {
             Value::Double(val) => self.push(StackValue::Num(val)),
             Value::Bool(val) => self.push(StackValue::Bool(val)),
             Value::Str(val) => self.allocate(HeapValue::Str(val)),
-            Value::Fun(fun) => self.allocate(HeapValue::Fun(Rc::new(fun))),
+            Value::Fun(fun) => self.allocate(HeapValue::Fun(fun)),
             Value::Nil => self.push(StackValue::Nil),
         }
 
@@ -291,6 +305,7 @@ impl<'a> VM<'a> {
     fn execute_constant(&mut self, con: Constant) -> VmResult<()> {
         let constant = self
             .current_frame()
+            .fun()
             .chunk
             .get_constant(con.0 as usize)
             .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
@@ -449,8 +464,8 @@ impl<'a> VM<'a> {
             .rev()
             .map(|idx| {
                 let frame = &self.frames[idx];
-                let line = *frame.fun.chunk.get_line(frame.ip - 1).unwrap();
-                let name = frame.fun.name.clone();
+                let line = *frame.fun().chunk.get_line(frame.ip - 1).unwrap();
+                let name = frame.fun().name.clone();
                 StackData::new(line, name)
             })
             .collect();

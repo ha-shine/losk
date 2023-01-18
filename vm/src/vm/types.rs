@@ -46,8 +46,9 @@ impl Debug for StackValue {
 #[derive(Debug, PartialEq)]
 pub(super) enum HeapValue {
     Str(String),
-    Fun(Rc<Function>),
+    Fun(Function),
     NativeFunction(NativeFunction),
+    Nil,
 }
 
 impl Display for HeapValue {
@@ -56,6 +57,7 @@ impl Display for HeapValue {
             HeapValue::Str(val) => write!(f, "{}", val),
             HeapValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
             HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
+            HeapValue::Nil => write!(f, "Nil"),
         }
     }
 }
@@ -91,25 +93,24 @@ impl Object {
 pub(super) struct CallFrame {
     // Unsafe pointer is used for performance, but the actual function will reside in the VM's
     // main function
-    pub(super) fun: Rc<Function>,
+    pub(super) fun: Rc<Object>,
 
     pub(super) ip: usize,
     pub(super) slots: usize,
 }
 
-impl Deref for CallFrame {
-    type Target = Function;
-
-    fn deref(&self) -> &Self::Target {
-        &self.fun
-    }
-}
-
 impl CallFrame {
     pub(super) fn next(&mut self) -> Option<&Instruction> {
-        let result = self.fun.chunk.get_instruction(self.ip);
         self.ip += 1;
+        let result = self.fun().chunk.get_instruction(self.ip - 1);
         result
+    }
+
+    pub(super) fn fun(&self) -> &Function {
+        match &self.fun.value {
+            HeapValue::Fun(fun) => fun,
+            _ => panic!("Unreachable"),
+        }
     }
 
     pub(super) fn jump(&mut self, offset: usize) {
@@ -124,7 +125,7 @@ impl CallFrame {
 impl Default for CallFrame {
     fn default() -> Self {
         CallFrame {
-            fun: Rc::new(Function::empty()),
+            fun: Object::new(HeapValue::Nil),
             ip: 0,
             slots: 0,
         }
