@@ -1,11 +1,9 @@
 use crate::chunk::{Chunk, UpvalueIndex};
 use crate::limits::UPVALUE_LIMIT;
 use crate::value::ConstantValue;
-use crate::vm::types::Object;
 use crate::vm::StackValue;
 use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
-use std::rc::Weak;
 
 pub(super) type NativeFn = fn(&[StackValue]) -> Option<NativeValue>;
 

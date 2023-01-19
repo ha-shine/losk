@@ -1,0 +1,21 @@
+fun makeCounter() {
+    var foo = "foo";
+
+    fun counter() {
+        foo = foo + " foo";
+        print foo;
+    }
+
+    return counter;
+}
+
+var c1 = makeCounter();
+var c2 = makeCounter();
+
+c1();
+c1();
+c1();
+
+c2();
+c2();
+c2();

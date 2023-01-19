@@ -52,35 +52,65 @@ pub struct VM<'a> {
 // it will not be reclaimed
 impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
-        let leaked_main = Box::leak(Box::new(main));
-        let main = Object::new(HeapValue::Fun(leaked_main));
-        let mut objects = LinkedList::new(ListAdapter::new());
-        objects.push_front(main.clone());
+        let mut vm = VM {
+            stack: Vec::with_capacity(DEFAULT_STACK),
+            objects: LinkedList::new(ListAdapter::new()),
+            frames: array_init::array_init(|_| CallFrame::default()),
+            frame_count: 0,
+            globals: HashMap::new(),
+            stdout,
+        };
 
-        // The main function needs to be pushed onto the objects first because doing that will
-        // send the object to the heap and the pointer created prior will be invalidated.
-        let mut frames: [CallFrame; FRAMES_MAX] = array_init::array_init(|_| CallFrame::default());
-        let mut stack = Vec::with_capacity(DEFAULT_STACK);
-        stack.push(StackValue::Obj(Rc::downgrade(&main)));
-        frames[0] = CallFrame {
+        let leaked = Box::leak(Box::new(main));
+        let main_closure = vm.make_closure(leaked);
+        let main = Object::new(HeapValue::closure(main_closure));
+        vm.objects.push_front(main.clone());
+        vm.stack.push(StackValue::Obj(Rc::downgrade(&main)));
+        vm.frames[0] = CallFrame {
             fun: Rc::downgrade(&main),
             ip: 0,
             slots: 0,
         };
+        vm.frame_count += 1;
 
         let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
-        objects.push_front(clock.clone());
+        vm.objects.push_front(clock.clone());
+        vm.globals
+            .insert("clock".to_string(), StackValue::Obj(Rc::downgrade(&clock)));
+        vm
+    }
 
-        let mut globals = HashMap::new();
-        globals.insert("clock".to_string(), StackValue::Obj(Rc::downgrade(&clock)));
+    fn make_closure(&self, fun: &'static Function) -> Closure {
+        let mut captured = Vec::with_capacity(fun.upvalue_count);
+        if fun.upvalue_count == 0 {
+            return Closure {
+                fun,
+                captured: RefCell::new(captured),
+            };
+        }
 
-        VM {
-            stack,
-            objects,
-            frames,
-            frame_count: 1,
-            globals,
-            stdout,
+        // Early return took care of the main <script>, so frame count will be definitely more than
+        // 1. And the parent always is a closure because it's interpreting a closure instruction.
+        let p_frame = self.current_frame();
+        let p_obj = p_frame.fun.upgrade().unwrap();
+        let p_closure = match &p_obj.value {
+            HeapValue::Closure(closure) => closure,
+            _ => panic!("Unreachable"),
+        };
+
+        for upvalue in (0..fun.upvalue_count).map(|idx| fun.upvalues[idx]) {
+            if upvalue.is_local {
+                // +1 needed because 0 is the function location itself, remember?
+                captured.push(self.stack[p_frame.slots + upvalue.index + 1].clone());
+            } else {
+                // The values must have been captured in parent CallFrame
+                captured.push(p_closure.captured.borrow()[upvalue.index].clone());
+            }
+        }
+
+        Closure {
+            fun,
+            captured: RefCell::new(captured),
         }
     }
 
@@ -229,21 +259,6 @@ impl<'a> VM<'a> {
                     //       rethink how I can do these consistently.
                     if let StackValue::Obj(obj) = &self.stack[self.stack.len() - count - 1] {
                         match &obj.upgrade().unwrap().value {
-                            HeapValue::Fun(fun) => {
-                                if count != fun.arity {
-                                    return Err(self.error(format_args!(
-                                        "Expected {} arguments but got {}.",
-                                        fun.arity, count
-                                    )));
-                                }
-
-                                self.frames[self.frame_count] = CallFrame {
-                                    fun: obj.clone(),
-                                    ip: 0,
-                                    slots: self.stack.len() - count - 1,
-                                };
-                                self.frame_count += 1;
-                            }
                             HeapValue::Closure(closure) => {
                                 if count != closure.fun.arity {
                                     return Err(self.error(format_args!(
@@ -290,33 +305,9 @@ impl<'a> VM<'a> {
                         .function()
                         .chunk
                         .get_constant(idx as usize);
-                    let frame = self.current_frame();
-                    let heap_obj = frame.fun.upgrade().unwrap();
-                    let closure = if let HeapValue::Closure(closure) = &heap_obj.value {
-                        Some(closure)
-                    } else {
-                        None
-                    };
 
                     if let Some(ConstantValue::Fun(fun)) = val {
-                        let mut captured = Vec::with_capacity(fun.upvalue_count);
-                        for upvalue in (0..fun.upvalue_count).map(|idx| fun.upvalues[idx]) {
-                            if upvalue.is_local {
-                                // +1 needed because 0 is the function location itself, remember?
-                                captured.push(self.stack[frame.slots + upvalue.index + 1].clone())
-                            } else {
-                                // The values must have been captured in current CallFrame
-                                captured.push(
-                                    closure.as_ref().unwrap().captured.borrow()[upvalue.index]
-                                        .clone(),
-                                );
-                            }
-                        }
-
-                        let closure = Closure {
-                            fun,
-                            captured: RefCell::new(captured),
-                        };
+                        let closure = self.make_closure(fun);
                         self.allocate(HeapValue::Closure(closure));
                     } else {
                         panic!("Unreachable")
@@ -381,7 +372,7 @@ impl<'a> VM<'a> {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
             ConstantValue::Str(val) => self.allocate(HeapValue::str(val.clone())),
-            ConstantValue::Fun(fun) => self.allocate(HeapValue::function(fun)),
+            ConstantValue::Fun(fun) => {}
             ConstantValue::Nil => self.push(StackValue::Nil),
         }
 
@@ -647,6 +638,10 @@ mod tests {
             (
                 include_str!("../../../data/capture_inner_variable.lox"),
                 include_str!("../../../data/capture_inner_variable.lox.expected"),
+            ),
+            (
+                include_str!("../../../data/captured_closure.lox"),
+                include_str!("../../../data/captured_closure.lox.expected"),
             ),
         ];
 

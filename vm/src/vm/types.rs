@@ -3,7 +3,6 @@ use crate::object::{Closure, NativeFunction};
 use crate::vm::error::RuntimeError;
 use crate::Function;
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
-use std::cell::RefCell;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::{Rc, Weak};
@@ -62,7 +61,6 @@ impl Debug for StackValue {
 #[derive(Debug)]
 pub(super) enum HeapValue {
     Str(String),
-    Fun(&'static Function),
     Closure(Closure),
     NativeFunction(NativeFunction),
 
@@ -74,10 +72,6 @@ pub(super) enum HeapValue {
 impl HeapValue {
     pub(super) fn str(str: String) -> HeapValue {
         HeapValue::Str(str)
-    }
-
-    pub(super) fn function(fun: &'static Function) -> HeapValue {
-        HeapValue::Fun(fun)
     }
 
     pub(super) fn closure(closure: Closure) -> HeapValue {
@@ -102,7 +96,6 @@ impl Display for HeapValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             HeapValue::Str(val) => write!(f, "{}", val),
-            HeapValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
             HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
             HeapValue::Closure(closure) => write!(f, "<Function {}>", closure.fun.name),
             HeapValue::Upvalue(upvalue) => write!(f, "{}", upvalue.upgrade().unwrap().value),
@@ -114,7 +107,6 @@ impl PartialEq for HeapValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (HeapValue::Str(l), HeapValue::Str(r)) => l == r,
-            (HeapValue::Fun(l), HeapValue::Fun(r)) => l == r,
             (HeapValue::Closure(l), HeapValue::Closure(r)) => l == r,
             (HeapValue::NativeFunction(l), HeapValue::NativeFunction(r)) => l == r,
             (HeapValue::Upvalue(l), r) => &l.upgrade().unwrap().value == r,
@@ -168,7 +160,6 @@ impl CallFrame {
 
     pub(super) fn function(&self) -> &'static Function {
         match &self.fun.upgrade().unwrap().value {
-            HeapValue::Fun(fun) => fun,
             HeapValue::Closure(closure) => closure.fun,
             _ => panic!("Unreachable"),
         }
