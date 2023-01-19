@@ -4,7 +4,7 @@ pub mod object;
 mod types;
 
 use crate::chunk::*;
-use crate::object::{Function, NativeFunction};
+use crate::object::{Function, NativeFunction, NativeValue};
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
@@ -43,9 +43,12 @@ pub struct VM<'a> {
     stdout: &'a mut dyn Write,
 }
 
+// Be aware the VM will leak the function passed into to create a static reference to it and
+// it will not be reclaimed
 impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
-        let main = Object::new(HeapValue::Fun(main));
+        let leaked_main = Box::leak(Box::new(main));
+        let main = Object::new(HeapValue::Fun(leaked_main));
         let mut objects = LinkedList::new(ListAdapter::new());
         objects.push_front(main.clone());
 
@@ -229,7 +232,7 @@ impl<'a> VM<'a> {
                                 let result = (fun.fun)(&self.stack[arg_beg..]);
                                 self.pop_n(count + 1); // args + function data
                                 if let Some(result) = result {
-                                    self.store_value(result)?;
+                                    self.store_native_value(result)?;
                                 }
                             }
                             _ => {
@@ -289,23 +292,6 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn store_value(&mut self, value: ConstantValue) -> VmResult<()> {
-        match value {
-            ConstantValue::Double(val) => self.push(StackValue::Num(val)),
-            ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
-            ConstantValue::Str(val) => self.allocate(HeapValue::Str(val)),
-            ConstantValue::Fun(fun) => self.allocate(HeapValue::Fun(fun)),
-            ConstantValue::Nil => self.push(StackValue::Nil),
-        }
-
-        Ok(())
-    }
-
-    // The constant value is being cloned here, if the value is a function that means the chunk which
-    // can be a large object is being cloned too. This definitely needs to be revisited.
-    // An unsafe pointer would work here because the function will always be valid as the main
-    // script will always be living at the front of the objects.
-    // TODO
     fn execute_constant(&mut self, con: Constant) -> VmResult<()> {
         let constant = self
             .current_frame()
@@ -313,7 +299,30 @@ impl<'a> VM<'a> {
             .chunk
             .get_constant(con.0 as usize)
             .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
-        self.store_value(constant.clone())
+
+        match constant {
+            ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
+            ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
+            ConstantValue::Str(val) => self.allocate(HeapValue::Str(val.clone())),
+            ConstantValue::Fun(fun) => self.allocate(HeapValue::Fun(fun)),
+            ConstantValue::Nil => self.push(StackValue::Nil),
+        }
+
+        Ok(())
+    }
+
+    fn store_native_value(&mut self, value: NativeValue) -> VmResult<()> {
+        match ConstantValue::from(value) {
+            ConstantValue::Double(val) => self.push(StackValue::Num(val)),
+            ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
+            ConstantValue::Str(val) => self.allocate(HeapValue::Str(val)),
+            ConstantValue::Nil => self.push(StackValue::Nil),
+            ConstantValue::Fun(_) => {
+                return Err(self.error(format_args!("Invalid return value from native function")))
+            }
+        }
+
+        Ok(())
     }
 
     fn execute_unary_op(&mut self, op: fn(&mut Self, StackValue) -> OpResult) -> VmResult<()> {

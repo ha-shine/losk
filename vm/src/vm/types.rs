@@ -45,7 +45,7 @@ impl Debug for StackValue {
 #[derive(Debug, PartialEq)]
 pub(super) enum HeapValue {
     Str(String),
-    Fun(Function),
+    Fun(&'static Function),
     NativeFunction(NativeFunction),
     Nil,
 }
@@ -105,7 +105,7 @@ impl CallFrame {
         result
     }
 
-    pub(super) fn fun(&self) -> &Function {
+    pub(super) fn fun(&self) -> &'static Function {
         match &self.fun.value {
             HeapValue::Fun(fun) => fun,
             _ => panic!("Unreachable"),
