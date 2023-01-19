@@ -8,18 +8,11 @@ use crate::Function;
 use losk_core::{TokenStream, Type};
 use thiserror::Error;
 
-struct LocalValue {
-    index: usize,
-}
-
-struct UpValue {
-    index: usize,
-    is_local: bool,
-}
+struct LocalIndex(usize);
 
 enum LocalResolution {
-    Local(LocalValue),
-    UpValue(UpValue),
+    Local(LocalIndex),
+    UpValue(UpvalueIndex),
     Global,
 }
 
@@ -477,12 +470,9 @@ impl Compiler {
             ctx.errs.append(&mut nested.errs);
             Err(ctx.error("Error while parsing function"))
         } else {
-            let nested_as_const = ctx
-                .fun
-                .chunk
-                .make_constant(ConstantValue::Fun(nested.fun))
-                .unwrap();
-            ctx.add_instruction(Instruction::Constant(nested_as_const));
+            let nested_as_const = ctx.fun.chunk.make_constant(ConstantValue::Fun(nested.fun));
+            let const_idx = ctx.unwrap_result(nested_as_const)?;
+            ctx.add_instruction(Instruction::Closure(const_idx));
             Ok(())
         }
     }
@@ -647,17 +637,20 @@ impl Compiler {
         let line = prev.line;
         let (set_op, get_op) = match ctx.resolve_variable(&name) {
             Ok(LocalResolution::Global) => {
-                let constant = ctx.identifier_constant(name);
+                let constant = ctx.identifier_constant(name)?;
                 (
                     Instruction::SetGlobal(constant),
                     Instruction::GetGlobal(constant),
                 )
             }
-            Ok(LocalResolution::Local(LocalValue { index })) => (
+            Ok(LocalResolution::Local(LocalIndex(index))) => (
                 Instruction::SetLocal(StackOffset(index as u8)),
                 Instruction::GetLocal(StackOffset(index as u8)),
             ),
-            Ok(LocalResolution::UpValue(UpValue { index, is_local })) => todo!(),
+            Ok(LocalResolution::UpValue(index)) => (
+                Instruction::SetUpvalue(index),
+                Instruction::GetUpvalue(index),
+            ),
             Err(err) => {
                 return Err(err);
             }
@@ -724,7 +717,7 @@ impl Compiler {
         let name = prev.lexeme.clone();
 
         self.declare_variable(ctx)?;
-        Ok(ctx.identifier_constant(name))
+        ctx.identifier_constant(name)
     }
 
     fn declare_variable(&self, ctx: &mut Context) -> CompilationResult<()> {

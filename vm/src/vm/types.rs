@@ -1,5 +1,5 @@
 use crate::chunk::Instruction;
-use crate::object::NativeFunction;
+use crate::object::{Closure, NativeFunction};
 use crate::vm::error::RuntimeError;
 use crate::Function;
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
@@ -46,6 +46,7 @@ impl Debug for StackValue {
 pub(super) enum HeapValue {
     Str(String),
     Fun(&'static Function),
+    Closure(Closure),
     NativeFunction(NativeFunction),
     Nil,
 }
@@ -56,6 +57,7 @@ impl Display for HeapValue {
             HeapValue::Str(val) => write!(f, "{}", val),
             HeapValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
             HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
+            HeapValue::Closure(closure) => write!(f, "<Function {}>", closure.fun.name),
             HeapValue::Nil => write!(f, "Nil"),
         }
     }
@@ -108,6 +110,7 @@ impl CallFrame {
     pub(super) fn fun(&self) -> &'static Function {
         match &self.fun.value {
             HeapValue::Fun(fun) => fun,
+            HeapValue::Closure(closure) => closure.fun,
             _ => panic!("Unreachable"),
         }
     }

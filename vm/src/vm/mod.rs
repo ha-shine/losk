@@ -4,7 +4,7 @@ pub mod object;
 mod types;
 
 use crate::chunk::*;
-use crate::object::{Function, NativeFunction, NativeValue};
+use crate::object::{Closure, Function, NativeFunction, NativeValue};
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
@@ -153,7 +153,8 @@ impl<'a> VM<'a> {
                     let index = self.current_frame().slots + index as usize + 1;
                     self.stack[index] = self.stack.last().unwrap().clone();
                 }
-
+                Instruction::GetUpvalue(UpvalueIndex(index)) => todo!(),
+                Instruction::SetUpvalue(UpvalueIndex(index)) => todo!(),
                 Instruction::Equal => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -220,6 +221,21 @@ impl<'a> VM<'a> {
                                 };
                                 self.frame_count += 1;
                             }
+                            HeapValue::Closure(closure) => {
+                                if count != closure.fun.arity {
+                                    return Err(self.error(format_args!(
+                                        "Expected {} arguments but got {}.",
+                                        closure.fun.arity, count
+                                    )));
+                                }
+
+                                self.frames[self.frame_count] = CallFrame {
+                                    fun: obj.clone(),
+                                    ip: 0,
+                                    slots: self.stack.len() - count - 1,
+                                };
+                                self.frame_count += 1;
+                            }
                             HeapValue::NativeFunction(fun) => {
                                 if count != fun.arity {
                                     return Err(self.error(format_args!(
@@ -243,6 +259,15 @@ impl<'a> VM<'a> {
                         }
                     } else {
                         return Err(self.error(format_args!("Can only call functions and classes")));
+                    }
+                }
+                Instruction::Closure(Constant(idx)) => {
+                    let val = self.current_frame().fun().chunk.get_constant(idx as usize);
+                    if let Some(ConstantValue::Fun(fun)) = val {
+                        let closure = Closure::new(fun);
+                        self.allocate(HeapValue::Closure(closure));
+                    } else {
+                        panic!("Unreachable")
                     }
                 }
                 Instruction::Return => {

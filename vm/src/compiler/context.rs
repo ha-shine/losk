@@ -1,5 +1,6 @@
 use crate::chunk::{Constant, Instruction};
 use crate::compiler::*;
+use crate::object::Upvalue;
 use crate::value::ConstantValue;
 use crate::{CompileError, Compiler, Function};
 use losk_core::{Token, TokenStream, Type};
@@ -64,6 +65,9 @@ impl<'token> Context<'token> {
     //     local variable. Note that the scope here means a block of statements, not a function
     //     or class.
     //   - Variables that are found across context boundaries are upvalues.
+    //
+    // It's possible to capture an upvalue that is already captured by enclosing function. In that
+    // case, an non-local upvalue is created.
     pub(super) fn resolve_variable(&mut self, name: &str) -> CompilationResult<LocalResolution> {
         if let Some(val) = self.resolve_local(name)? {
             return Ok(LocalResolution::Local(val));
@@ -75,24 +79,38 @@ impl<'token> Context<'token> {
             return Ok(LocalResolution::Global);
         }
 
-        match self.resolve_local(name)? {
-            Some(val) => Ok(LocalResolution::Local(val)),
-            None => match self.enclosing.as_ref().unwrap().resolve_local(name)? {
-                Some(upval) => {
-                    todo!()
-                }
-                None => Ok(LocalResolution::Global),
-            },
+        // Check if the variable is defined in local scope
+        if let Some(val) = self.resolve_local(name)? {
+            return Ok(LocalResolution::Local(val));
         }
+
+        let result = match self.enclosing.as_mut().unwrap().resolve_variable(name)? {
+            // It's a local variable from enclosing, so captured it in here
+            LocalResolution::Local(local) => self
+                .fun
+                .add_upvalue(Upvalue::new(local.0, true))
+                .map(LocalResolution::UpValue),
+
+            // It's already captured in the enclosing function, capture it again as an upvalue
+            LocalResolution::UpValue(upvalue) => self
+                .fun
+                .add_upvalue(Upvalue::new(upvalue.0, false))
+                .map(LocalResolution::UpValue),
+
+            // Enclosing variable report it as a global, so mark it as one
+            LocalResolution::Global => Ok(LocalResolution::Global),
+        };
+
+        self.unwrap_result(result)
     }
 
-    pub(super) fn resolve_local(&self, name: &str) -> CompilationResult<Option<LocalValue>> {
+    fn resolve_local(&self, name: &str) -> CompilationResult<Option<LocalIndex>> {
         for (idx, local) in self.locals.iter().rev().enumerate() {
             if local.name == name {
                 return if local.depth == -1 {
                     Err(self.error("Can't read local variable in its own initializer"))
                 } else {
-                    Ok(Some(LocalValue { index: idx }))
+                    Ok(Some(LocalIndex(idx)))
                 };
             }
         }
@@ -100,11 +118,9 @@ impl<'token> Context<'token> {
         Ok(None)
     }
 
-    pub(super) fn identifier_constant(&mut self, name: String) -> Constant {
-        self.fun
-            .chunk
-            .make_constant(ConstantValue::Str(name))
-            .unwrap()
+    pub(super) fn identifier_constant(&mut self, name: String) -> CompilationResult<Constant> {
+        let res = self.fun.chunk.make_constant(ConstantValue::Str(name));
+        self.unwrap_result(res)
     }
 
     pub(super) fn define_variable(&mut self, constant: Constant, line: usize) {
@@ -206,5 +222,12 @@ impl<'token> Context<'token> {
         };
 
         CompileError::new(line, msg)
+    }
+
+    pub(super) fn unwrap_result<T>(&self, res: Result<T, &'static str>) -> CompilationResult<T> {
+        match res {
+            Ok(val) => Ok(val),
+            Err(msg) => Err(self.error(msg)),
+        }
     }
 }

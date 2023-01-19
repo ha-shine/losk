@@ -20,6 +20,8 @@ pub(crate) enum Instruction {
     SetGlobal(Constant),
     GetLocal(StackOffset),
     SetLocal(StackOffset),
+    GetUpvalue(UpvalueIndex),
+    SetUpvalue(UpvalueIndex),
     Equal,
     Greater,
     Less,
@@ -34,6 +36,7 @@ pub(crate) enum Instruction {
     Jump(JumpDist),
     Loop(JumpDist),
     Call(ArgCount),
+    Closure(Constant),
     Return,
 }
 
@@ -48,6 +51,9 @@ pub(crate) struct JumpDist(pub(crate) usize);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct ArgCount(pub(crate) usize);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct UpvalueIndex(pub(crate) usize);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chunk {
