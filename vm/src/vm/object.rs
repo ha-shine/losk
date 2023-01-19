@@ -1,8 +1,11 @@
 use crate::chunk::{Chunk, UpvalueIndex};
 use crate::limits::UPVALUE_LIMIT;
 use crate::value::ConstantValue;
+use crate::vm::types::Object;
 use crate::vm::StackValue;
+use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
+use std::rc::Weak;
 
 pub(super) type NativeFn = fn(&[StackValue]) -> Option<NativeValue>;
 
@@ -45,8 +48,8 @@ impl PartialEq for NativeFunction {
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub(crate) struct Upvalue {
-    index: usize,
-    is_local: bool,
+    pub(crate) index: usize,
+    pub(crate) is_local: bool,
 }
 
 impl Upvalue {
@@ -108,13 +111,31 @@ impl NativeFunction {
     }
 }
 
-#[derive(Debug, PartialEq)]
+// Closure contains upvalues and upvalue count? It has access to upvaulues through its function
+// but how does it knows the actual values of those upvalues?
+#[derive(Debug)]
 pub(super) struct Closure {
     pub(super) fun: &'static Function,
+
+    // Not sure how to capture variables yet if they are stack values like boolean?
+    // I can't store the whole object in this vector as well, instead of the pointer to object
+    // because the captured value might be modified by outer scope. e.g
+    //
+    // var name = "Shine";
+    // fun inner() { print name; }
+    // name = "John";
+    // inner();
+    //
+    // When this happens, should Lox prints "John" or "Shine"?
+    // Should the variables be final if they were to be captured in a closure like Java?
+    // It would certainly make the code more performant since now I can just store those objects
+    // in this closure.
+    // Captured are a pointer to value (which is StackValue)
+    pub(super) captured: RefCell<Vec<StackValue>>,
 }
 
-impl Closure {
-    pub(super) fn new(fun: &'static Function) -> Self {
-        Closure { fun }
+impl PartialEq for Closure {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
     }
 }

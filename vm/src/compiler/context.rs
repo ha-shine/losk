@@ -105,7 +105,7 @@ impl<'token> Context<'token> {
     }
 
     fn resolve_local(&self, name: &str) -> CompilationResult<Option<LocalIndex>> {
-        for (idx, local) in self.locals.iter().rev().enumerate() {
+        for (idx, local) in self.locals.iter().enumerate().rev() {
             if local.name == name {
                 return if local.depth == -1 {
                     Err(self.error("Can't read local variable in its own initializer"))

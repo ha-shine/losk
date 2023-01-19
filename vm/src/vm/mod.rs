@@ -10,9 +10,11 @@ use crate::vm::error::*;
 use crate::vm::types::*;
 use intrusive_collections::LinkedList;
 use native::clock;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
+use std::rc::Rc;
 
 const DEFAULT_STACK: usize = 256;
 const FRAMES_MAX: usize = 256;
@@ -24,6 +26,9 @@ pub struct VM<'a> {
     stack: Vec<StackValue>,
 
     // List of objects currently allocated on the heap
+    // Note that the heap objects need to be mutable because of two reasons -
+    //   - Garbage collector will mark the objects
+    //   - Closure's captured values will be updated with `SetUpvalue` instruction
     objects: LinkedList<ListAdapter>,
 
     // The call frame is limited and is allocated on the rust stack for faster access compared to
@@ -56,20 +61,18 @@ impl<'a> VM<'a> {
         // send the object to the heap and the pointer created prior will be invalidated.
         let mut frames: [CallFrame; FRAMES_MAX] = array_init::array_init(|_| CallFrame::default());
         let mut stack = Vec::with_capacity(DEFAULT_STACK);
-        stack.push(StackValue::Obj(main.clone()));
+        stack.push(StackValue::Obj(Rc::downgrade(&main)));
         frames[0] = CallFrame {
-            fun: main,
+            fun: Rc::downgrade(&main),
             ip: 0,
             slots: 0,
         };
 
-        let clock = Object::new(HeapValue::NativeFunction(NativeFunction::new(
-            "clock", 0, clock,
-        )));
+        let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
         objects.push_front(clock.clone());
 
         let mut globals = HashMap::new();
-        globals.insert("clock".to_string(), StackValue::Obj(clock));
+        globals.insert("clock".to_string(), StackValue::Obj(Rc::downgrade(&clock)));
 
         VM {
             stack,
@@ -109,7 +112,7 @@ impl<'a> VM<'a> {
                 Instruction::GetGlobal(Constant(index)) => {
                     let name = match self
                         .current_frame()
-                        .fun()
+                        .function()
                         .chunk
                         .get_constant(index as usize)
                     {
@@ -129,7 +132,7 @@ impl<'a> VM<'a> {
                     // from the pool to get the name.
                     let name = match self
                         .current_frame()
-                        .fun()
+                        .function()
                         .chunk
                         .get_constant(index as usize)
                     {
@@ -153,8 +156,26 @@ impl<'a> VM<'a> {
                     let index = self.current_frame().slots + index as usize + 1;
                     self.stack[index] = self.stack.last().unwrap().clone();
                 }
-                Instruction::GetUpvalue(UpvalueIndex(index)) => todo!(),
-                Instruction::SetUpvalue(UpvalueIndex(index)) => todo!(),
+                Instruction::GetUpvalue(UpvalueIndex(index)) => {
+                    if let HeapValue::Closure(closure) =
+                        &self.current_frame().fun.upgrade().unwrap().value
+                    {
+                        self.push(closure.captured.borrow()[index].clone());
+                    } else {
+                        // This means the compiler borked the compilation
+                        panic!("Unreachable")
+                    }
+                }
+                Instruction::SetUpvalue(UpvalueIndex(index)) => {
+                    let top = self.peek().clone();
+                    if let HeapValue::Closure(closure) =
+                        &self.current_frame().fun.upgrade().unwrap().value
+                    {
+                        closure.captured.borrow_mut()[index] = top;
+                    } else {
+                        panic!("Unreachable")
+                    }
+                }
                 Instruction::Equal => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -204,8 +225,10 @@ impl<'a> VM<'a> {
 
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
+                    // TODO: Adding (or removing) these -1s and +1s are error prone. I need to
+                    //       rethink how I can do these consistently.
                     if let StackValue::Obj(obj) = &self.stack[self.stack.len() - count - 1] {
-                        match &obj.value {
+                        match &obj.upgrade().unwrap().value {
                             HeapValue::Fun(fun) => {
                                 if count != fun.arity {
                                     return Err(self.error(format_args!(
@@ -262,9 +285,38 @@ impl<'a> VM<'a> {
                     }
                 }
                 Instruction::Closure(Constant(idx)) => {
-                    let val = self.current_frame().fun().chunk.get_constant(idx as usize);
+                    let val = self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(idx as usize);
+                    let frame = self.current_frame();
+                    let heap_obj = frame.fun.upgrade().unwrap();
+                    let closure = if let HeapValue::Closure(closure) = &heap_obj.value {
+                        Some(closure)
+                    } else {
+                        None
+                    };
+
                     if let Some(ConstantValue::Fun(fun)) = val {
-                        let closure = Closure::new(fun);
+                        let mut captured = Vec::with_capacity(fun.upvalue_count);
+                        for upvalue in (0..fun.upvalue_count).map(|idx| fun.upvalues[idx]) {
+                            if upvalue.is_local {
+                                // +1 needed because 0 is the function location itself, remember?
+                                captured.push(self.stack[frame.slots + upvalue.index + 1].clone())
+                            } else {
+                                // The values must have been captured in current CallFrame
+                                captured.push(
+                                    closure.as_ref().unwrap().captured.borrow()[upvalue.index]
+                                        .clone(),
+                                );
+                            }
+                        }
+
+                        let closure = Closure {
+                            fun,
+                            captured: RefCell::new(captured),
+                        };
                         self.allocate(HeapValue::Closure(closure));
                     } else {
                         panic!("Unreachable")
@@ -300,7 +352,7 @@ impl<'a> VM<'a> {
         // avoid unsafe code in this before profiling.
         let name = match self
             .current_frame()
-            .fun()
+            .function()
             .chunk
             .get_constant(constant.0 as usize)
         {
@@ -320,7 +372,7 @@ impl<'a> VM<'a> {
     fn execute_constant(&mut self, con: Constant) -> VmResult<()> {
         let constant = self
             .current_frame()
-            .fun()
+            .function()
             .chunk
             .get_constant(con.0 as usize)
             .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
@@ -328,8 +380,8 @@ impl<'a> VM<'a> {
         match constant {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
-            ConstantValue::Str(val) => self.allocate(HeapValue::Str(val.clone())),
-            ConstantValue::Fun(fun) => self.allocate(HeapValue::Fun(fun)),
+            ConstantValue::Str(val) => self.allocate(HeapValue::str(val.clone())),
+            ConstantValue::Fun(fun) => self.allocate(HeapValue::function(fun)),
             ConstantValue::Nil => self.push(StackValue::Nil),
         }
 
@@ -340,7 +392,7 @@ impl<'a> VM<'a> {
         match ConstantValue::from(value) {
             ConstantValue::Double(val) => self.push(StackValue::Num(val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
-            ConstantValue::Str(val) => self.allocate(HeapValue::Str(val)),
+            ConstantValue::Str(val) => self.allocate(HeapValue::str(val)),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => {
                 return Err(self.error(format_args!("Invalid return value from native function")))
@@ -392,15 +444,17 @@ impl<'a> VM<'a> {
             (StackValue::Num(l), StackValue::Num(r)) => {
                 Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
             }
-            (StackValue::Obj(l), StackValue::Obj(r)) => match (&l.value, &r.value) {
-                (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
-                    let mut res = String::with_capacity(lstr.len() + rstr.len());
-                    res += lstr;
-                    res += rstr;
-                    Ok(StackOrHeap::Heap(HeapValue::Str(res)))
+            (StackValue::Obj(l), StackValue::Obj(r)) => {
+                match (&l.upgrade().unwrap().value, &r.upgrade().unwrap().value) {
+                    (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
+                        let mut res = String::with_capacity(lstr.len() + rstr.len());
+                        res += lstr;
+                        res += rstr;
+                        Ok(StackOrHeap::Heap(HeapValue::Str(res)))
+                    }
+                    _ => Err("Expect both operands to be either numbers or strings."),
                 }
-                _ => Err("Expect both operands to be either numbers or strings."),
-            },
+            }
             (_, _) => Err("Expect both operands to be either numbers or strings."),
         }
     }
@@ -483,7 +537,7 @@ impl<'a> VM<'a> {
 
     fn allocate(&mut self, val: HeapValue) {
         let hval = Object::new(val);
-        let sval = StackValue::Obj(hval.clone());
+        let sval = StackValue::Obj(Rc::downgrade(&hval));
 
         self.objects.push_front(hval);
         self.stack.push(sval);
@@ -502,8 +556,8 @@ impl<'a> VM<'a> {
             .rev()
             .map(|idx| {
                 let frame = &self.frames[idx];
-                let line = *frame.fun().chunk.get_line(frame.ip - 1).unwrap();
-                let name = frame.fun().name.clone();
+                let line = *frame.function().chunk.get_line(frame.ip - 1).unwrap();
+                let name = frame.function().name.clone();
                 StackData::new(line, name)
             })
             .collect();
@@ -589,6 +643,10 @@ mod tests {
             (
                 include_str!("../../../data/fib.lox"),
                 include_str!("../../../data/fib.lox.expected"),
+            ),
+            (
+                include_str!("../../../data/capture_inner_variable.lox"),
+                include_str!("../../../data/capture_inner_variable.lox.expected"),
             ),
         ];
 
