@@ -36,8 +36,7 @@ pub struct VM<'a> {
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
     // when the VM starts.
-    frames: [CallFrame; FRAMES_MAX],
-    frame_count: usize,
+    frames: Vec<CallFrame>,
 
     // Globals are used to map between a variable defined on the global scope to it's corresponding
     // value. The values are of type `StackValue` because the globals can be mapped to either stack
@@ -58,8 +57,7 @@ impl<'a> VM<'a> {
         let mut vm = VM {
             stack: Vec::with_capacity(DEFAULT_STACK),
             objects: LinkedList::new(ListAdapter::new()),
-            frames: array_init::array_init(|_| CallFrame::default()),
-            frame_count: 0,
+            frames: Vec::with_capacity(FRAMES_MAX),
             globals: HashMap::new(),
             stdout,
         };
@@ -108,12 +106,11 @@ impl<'a> VM<'a> {
         let main = Object::new(HeapValue::closure(main_closure));
         self.objects.push_front(main.clone());
         self.stack.push(StackValue::Obj(Rc::downgrade(&main)));
-        self.frames[0] = CallFrame {
+        self.frames.push(CallFrame {
             fun: main,
             ip: 0,
             slots: 0,
-        };
-        self.frame_count += 1;
+        });
 
         self.interpret()
     }
@@ -249,7 +246,7 @@ impl<'a> VM<'a> {
                     self.current_frame_mut().loop_(dist + 1)
                 }
                 Instruction::Call(ArgCount(count)) => {
-                    if self.frame_count == FRAMES_MAX {
+                    if self.frames.len() == FRAMES_MAX {
                         return Err(self.error(format_args!("Stack overflow.")));
                     }
 
@@ -269,12 +266,11 @@ impl<'a> VM<'a> {
                                     )));
                                 }
 
-                                self.frames[self.frame_count] = CallFrame {
+                                self.frames.push(CallFrame {
                                     fun: obj,
                                     ip: 0,
                                     slots: self.stack.len() - count - 1,
-                                };
-                                self.frame_count += 1;
+                                });
                             }
                             HeapValue::NativeFunction(fun) => {
                                 if count != fun.arity {
@@ -326,18 +322,14 @@ impl<'a> VM<'a> {
                     }
                 }
                 Instruction::Return => {
-                    // Ensure the current frame's closure is replaced with an empty closure.
-                    // If not, there's a potential that this frame will hold on to the closure
-                    // forever because call-frames are stored in an array and are not dropped.
-                    // This won't happen with a pointer.
-                    self.current_frame_mut().fun = Object::new(HeapValue::Str(String::new()));
+                    // Ensure the current frame's closure is dropped after returning.
+                    let frame = self.frames.pop().unwrap();
 
                     // The return value of a function should be on top of the stack, so it'll be
                     // pushed onto the top of the stack.
                     let result = self.pop();
-                    let slots = self.current_frame().slots;
-                    self.frame_count -= 1;
-                    if self.frame_count == 0 {
+                    let slots = frame.slots;
+                    if self.frames.is_empty() {
                         self.pop();
                         return Ok(());
                     }
@@ -571,18 +563,19 @@ impl<'a> VM<'a> {
     }
 
     fn current_frame(&self) -> &CallFrame {
-        &self.frames[self.frame_count - 1]
+        self.frames.last().unwrap()
     }
 
     fn current_frame_mut(&mut self) -> &mut CallFrame {
-        &mut self.frames[self.frame_count - 1]
+        self.frames.last_mut().unwrap()
     }
 
     fn error(&self, args: fmt::Arguments) -> Box<RuntimeError> {
-        let data: Vec<_> = (0..self.frame_count)
+        let data: Vec<_> = self
+            .frames
+            .iter()
             .rev()
-            .map(|idx| {
-                let frame = &self.frames[idx];
+            .map(|frame| {
                 let line = *frame.function().chunk.get_line(frame.ip - 1).unwrap();
                 let name = frame.function().name.clone();
                 StackData::new(line, name)
