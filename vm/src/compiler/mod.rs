@@ -4,8 +4,8 @@ use losk_core::{TokenStream, Type};
 
 use crate::chunk::*;
 use crate::compiler::context::*;
-use crate::Function;
 use crate::value::ConstantValue;
+use crate::Function;
 
 mod context;
 
@@ -645,8 +645,8 @@ impl Compiler {
                 )
             }
             Ok(LocalResolution::Local(LocalIndex(index))) => (
-                Instruction::SetLocal(StackOffset(index as u8)),
-                Instruction::GetLocal(StackOffset(index as u8)),
+                Instruction::SetLocal(StackPosition::Offset(index)),
+                Instruction::GetLocal(StackPosition::Offset(index)),
             ),
             Ok(LocalResolution::UpValue(index)) => (
                 Instruction::SetUpvalue(index),

@@ -188,14 +188,13 @@ impl<'a> VM<'a> {
 
                 // Additional 1 is added because the stack[0] is the information for current
                 // call frame
-                Instruction::GetLocal(StackOffset(index)) => {
-                    let index = self.current_frame().slots + index as usize + 1;
-                    let val = self.stack[index].clone();
+                Instruction::GetLocal(pos) => {
+                    let val = self.peek_stack(pos).clone();
                     self.push(val);
                 }
-                Instruction::SetLocal(StackOffset(index)) => {
-                    let index = self.current_frame().slots + index as usize + 1;
-                    self.stack[index] = self.stack.last().unwrap().clone();
+                Instruction::SetLocal(pos) => {
+                    let last = self.stack.last().unwrap().clone();
+                    self.put_stack(pos, last);
                 }
                 Instruction::GetUpvalue(UpvalueIndex(index)) => {
                     if let HeapValue::Closure(closure) =
@@ -267,8 +266,9 @@ impl<'a> VM<'a> {
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
                     // TODO: Adding (or removing) these -1s and +1s are error prone. I need to
-                    //       rethink how I can do these consistently.
-                    if let StackValue::Obj(obj) = &self.stack[self.stack.len() - count - 1] {
+                    //       rethink how I can do these consistently. Ideally every access
+                    //       should be done by the peek_stack, put_stack directly
+                    if let StackValue::Obj(obj) = self.peek_stack(StackPosition::RevOffset(count)) {
                         match &obj.upgrade().unwrap().value {
                             HeapValue::Closure(closure) => {
                                 if count != closure.fun.arity {
@@ -527,6 +527,24 @@ impl<'a> VM<'a> {
         match val {
             StackValue::Num(val) => Ok(StackOrHeap::Stack(StackValue::Num(-val))),
             _ => Err("Expect operand to be a number value."),
+        }
+    }
+
+    fn peek_stack(&self, pos: StackPosition) -> &StackValue {
+        let index = self.stack_pos_to_index(pos);
+        &self.stack[index]
+    }
+
+    fn put_stack(&mut self, pos: StackPosition, val: StackValue) {
+        let index = self.stack_pos_to_index(pos);
+        self.stack[index] = val
+    }
+
+    fn stack_pos_to_index(&self, pos: StackPosition) -> usize {
+        match pos {
+            StackPosition::Offset(offset) => self.current_frame().slots + offset + 1,
+            StackPosition::Index(index) => index,
+            StackPosition::RevOffset(offset) => self.stack.len() - offset - 1,
         }
     }
 
