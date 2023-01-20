@@ -120,7 +120,7 @@ impl Object {
 // Copy-derived to initialise an array of frames with default values when the VM starts.
 #[derive(Clone)]
 pub(super) struct CallFrame {
-    pub(super) fun: Weak<Object>,
+    pub(super) fun: Rc<Object>,
 
     pub(super) ip: usize,
     pub(super) slots: usize,
@@ -134,7 +134,7 @@ impl CallFrame {
     }
 
     pub(super) fn function(&self) -> &'static Function {
-        match &self.fun.upgrade().unwrap().value {
+        match &self.fun.value {
             HeapValue::Closure(closure) => closure.fun,
             _ => panic!("Unreachable"),
         }
@@ -152,7 +152,7 @@ impl CallFrame {
 impl Default for CallFrame {
     fn default() -> Self {
         CallFrame {
-            fun: Weak::new(),
+            fun: Object::new(HeapValue::Str(String::new())),
             ip: 0,
             slots: 0,
         }

@@ -1,7 +1,6 @@
-use std::cell::RefCell;
 use std::fmt::{Debug, Formatter};
 
-use crate::chunk::{Chunk, UpvalueIndex};
+use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
 use crate::limits::UPVALUE_LIMIT;
 use crate::value::ConstantValue;
 use crate::vm::StackValue;
@@ -110,36 +109,17 @@ impl NativeFunction {
     }
 }
 
-// Closure contains upvalues and upvalue count? It has access to upvaulues through its function
-// but how does it knows the actual values of those upvalues?
+// Closure contains upvalues and upvalue count through the function pointer, so captured can be
+// created with known size in advance.
+// Some primer on upvalues, closed upvalues are those which have been captured by the closure, i.e
+// their ownership is transferred from their original scope to the closure because the original
+// scope will go out and the upvalue would be dropped. The opened upvalues are those which are
+// still referring to the original value through stack offsets. Note that in the textbook, they
+// are pointers. But I will need to use an index because of Rust.
 #[derive(Debug)]
 pub(super) struct Closure {
     pub(super) fun: &'static Function,
-
-    // Not sure how to capture variables yet if they are stack values like boolean?
-    // I can't store the whole object in this vector as well, instead of the pointer to object
-    // because the captured value might be modified by outer scope. e.g
-    //
-    // var name = "Shine";
-    // fun inner() { print name; }
-    // name = "John";
-    // inner();
-    //
-    // When this happens, should Lox prints "John" or "Shine"?
-    // Should the variables be final if they were to be captured in a closure like Java?
-    // It would certainly make the code more performant since now I can just store those objects
-    // in this closure.
-    //
-    // In the text book, the captured (called `upvalues` verbatim) are pointers to original
-    // stack value. I can't do this easily here because of Rust without re-writing a big
-    // chunk of this.
-    // The good thing about this is that for normal stack values, the values are copied, and
-    // modification to the captured objects will not affect the original. This even works for
-    // strings because strings can only be concatenated and the results are new heap allocated
-    // string and the pointer to there are captured. The original pointer is not modified while
-    // the captured one will point to new string after concatenation.
-    // With classes, this will be an issue because mutation to objects will not create new objects.
-    pub(super) captured: RefCell<Vec<StackValue>>,
+    pub(super) captured: Vec<StackPosition>,
 }
 
 impl PartialEq for Closure {
