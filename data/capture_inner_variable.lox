@@ -8,3 +8,17 @@ fun outer() {
 }
 
 outer();
+
+fun modifyUpvalue() {
+    var name = "Shine";
+    print "Hello, " + name;
+
+    fun setName(value) {
+        name = value;
+    }
+
+    setName("John");
+    print "Hello, " + name;
+}
+
+modifyUpvalue();
