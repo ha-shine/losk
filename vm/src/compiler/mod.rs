@@ -59,6 +59,7 @@ enum FunctionType {
 struct Local {
     name: String,
     depth: isize,
+    is_captured: bool,
 }
 
 pub struct Compiler;
@@ -171,6 +172,10 @@ impl Compiler {
     }
 
     fn compile_context(&self, ctx: &mut Context) {
+        // A dummy local value needs to be added for special local zero slot that will be used for
+        // the closure
+        ctx.add_local(String::new(), Some(0)).unwrap();
+
         // If this is a function, the compiler doesn't need to parse until EOF. It's enough to
         // parse just the function name, parameters, and the body
         //
@@ -739,7 +744,7 @@ impl Compiler {
             }
         }
 
-        ctx.add_local(name)?;
+        ctx.add_local(name, None)?;
         Ok(())
     }
 

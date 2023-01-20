@@ -1,10 +1,10 @@
 use losk_core::{Token, TokenStream, Type};
 
-use crate::{CompileError, Compiler, Function};
 use crate::chunk::{Constant, Instruction};
 use crate::compiler::*;
 use crate::object::Upvalue;
 use crate::value::ConstantValue;
+use crate::{CompileError, Compiler, Function};
 
 pub(super) struct Context<'token> {
     pub(super) stream: TokenStream<'token>,
@@ -51,11 +51,19 @@ impl<'token> Context<'token> {
         }
     }
 
-    pub(super) fn add_local(&mut self, name: String) -> CompilationResult<()> {
+    pub(super) fn add_local(
+        &mut self,
+        name: String,
+        depth: Option<isize>,
+    ) -> CompilationResult<()> {
         if self.locals.len() == Compiler::STACK_SIZE {
             Err(self.error("Too many local variables in function."))
         } else {
-            self.locals.push(Local { name, depth: -1 });
+            self.locals.push(Local {
+                name,
+                depth: depth.unwrap_or(-1),
+                is_captured: false,
+            });
             Ok(())
         }
     }

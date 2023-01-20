@@ -86,8 +86,7 @@ impl<'a> VM<'a> {
 
         for upvalue in (0..fun.upvalue_count).map(|idx| fun.upvalues[idx]) {
             if upvalue.is_local {
-                // +1 needed because 0 is the function location itself, remember?
-                captured.push(StackPosition::Index(p_frame.slots + upvalue.index + 1));
+                captured.push(StackPosition::Index(p_frame.slots + upvalue.index));
             } else {
                 // The values must have been captured in parent CallFrame
                 captured.push(p_closure.captured[upvalue.index]);
@@ -176,16 +175,16 @@ impl<'a> VM<'a> {
                 }
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
 
-                // Additional 1 is added because the stack[0] is the information for current
-                // call frame
                 Instruction::GetLocal(pos) => {
                     let val = self.peek_stack(pos).clone();
                     self.push(val);
                 }
+
                 Instruction::SetLocal(pos) => {
                     let last = self.stack.last().unwrap().clone();
                     self.put_stack(pos, last);
                 }
+
                 Instruction::GetUpvalue(UpvalueIndex(index)) => {
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
                         let value = self.peek_stack(closure.captured[index]).clone();
@@ -196,7 +195,7 @@ impl<'a> VM<'a> {
                     }
                 }
                 Instruction::SetUpvalue(UpvalueIndex(index)) => {
-                    let top = self.peek().clone();
+                    let top = self.peek_stack(StackPosition::RevOffset(0)).clone();
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
                         self.put_stack(closure.captured[index], top);
                     } else {
@@ -223,7 +222,7 @@ impl<'a> VM<'a> {
                 Instruction::JumpIfFalse(JumpDist(dist)) => {
                     // The pointer has already been incremented by 1 before this match statement,
                     // so need to subtract 1 from jump distance.
-                    match self.peek() {
+                    match self.peek_stack(StackPosition::RevOffset(0)) {
                         StackValue::Bool(val) => {
                             if !val {
                                 self.current_frame_mut().jump(dist - 1)
@@ -252,9 +251,6 @@ impl<'a> VM<'a> {
 
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
-                    // TODO: Adding (or removing) these -1s and +1s are error prone. I need to
-                    //       rethink how I can do these consistently. Ideally every access
-                    //       should be done by the peek_stack, put_stack directly
                     if let StackValue::Obj(obj) = self.peek_stack(StackPosition::RevOffset(count)) {
                         let obj = obj.upgrade().unwrap();
                         match &obj.value {
@@ -347,7 +343,7 @@ impl<'a> VM<'a> {
     fn execute_set_global(&mut self, constant: Constant) -> VmResult<()> {
         // Note that the set variable doesn't pop the value from the stack because the set assignment
         // is an expression statement and there always is a pop instruction after expression statement.
-        let val = self.peek().clone();
+        let val = self.peek_stack(StackPosition::RevOffset(0)).clone();
 
         // It's a bit wasteful to clone the constant name everytime it's assigned, but I want to
         // avoid unsafe code in this before profiling.
@@ -531,7 +527,7 @@ impl<'a> VM<'a> {
 
     fn stack_pos_to_index(&self, pos: StackPosition) -> usize {
         match pos {
-            StackPosition::Offset(offset) => self.current_frame().slots + offset + 1,
+            StackPosition::Offset(offset) => self.current_frame().slots + offset,
             StackPosition::Index(index) => index,
             StackPosition::RevOffset(offset) => self.stack.len() - offset - 1,
         }
@@ -548,10 +544,6 @@ impl<'a> VM<'a> {
     fn pop_n(&mut self, n: usize) {
         let start = self.stack.len() - n;
         self.stack.drain(start..);
-    }
-
-    fn peek(&self) -> &StackValue {
-        self.stack.last().unwrap()
     }
 
     fn allocate(&mut self, val: HeapValue) {
