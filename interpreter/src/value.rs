@@ -1,10 +1,12 @@
-use crate::callable::{Callable, Instance};
-use losk_core::Literal;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ptr;
 use std::rc::Rc;
+
+use losk_core::Literal;
+
+use crate::callable::{Callable, Instance};
 
 #[derive(Debug, Clone)]
 pub(crate) enum Value {

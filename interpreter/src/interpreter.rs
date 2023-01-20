@@ -4,13 +4,14 @@ use std::io::Write;
 use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use losk_core::{Token, TokenIndex, Type};
+
 use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
 use crate::callable::{BoxedFunction, CallableType, Class, Function, Instance, Method, Native};
 use crate::env::Environment;
 use crate::error::Error;
 use crate::resolver::ResolvedStmts;
 use crate::value::Value;
-use losk_core::{Token, TokenIndex, Type};
 
 pub struct Interpreter {
     globals: Rc<RefCell<Environment>>,
@@ -479,11 +480,12 @@ mod tests {
     use std::rc::Rc;
     use std::str;
 
+    use losk_core::Scanner;
+
     use crate::error::Error;
     use crate::interpreter::Interpreter;
     use crate::parser::Parser;
     use crate::resolver::Resolver;
-    use losk_core::Scanner;
 
     fn test_program(src: &str, out: Option<&str>, err: Option<&str>) {
         println!("Testing source:\n{}", src);

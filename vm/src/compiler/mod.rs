@@ -1,12 +1,13 @@
-mod context;
+use thiserror::Error;
+
+use losk_core::{TokenStream, Type};
 
 use crate::chunk::*;
 use crate::compiler::context::*;
-use crate::value::ConstantValue;
 use crate::Function;
+use crate::value::ConstantValue;
 
-use losk_core::{TokenStream, Type};
-use thiserror::Error;
+mod context;
 
 struct LocalIndex(usize);
 

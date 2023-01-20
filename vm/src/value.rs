@@ -1,7 +1,9 @@
-use crate::object::Function;
-use losk_core::Literal;
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
+
+use losk_core::Literal;
+
+use crate::object::Function;
 
 // These values here are emitted from the source code into the chunk by the compiler.
 // The chunk store them in a constant pool which are referred by their index when the vm executes

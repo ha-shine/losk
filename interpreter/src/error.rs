@@ -1,6 +1,8 @@
-use crate::value::Value;
-use losk_core::{Error as CoreError, Token};
 use thiserror::Error;
+
+use losk_core::{Error as CoreError, Token};
+
+use crate::value::Value;
 
 #[derive(Debug, Error, PartialEq)]
 #[allow(clippy::enum_variant_names)]

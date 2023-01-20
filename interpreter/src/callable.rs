@@ -1,13 +1,15 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt::{Debug, Display, Formatter};
+use std::rc::Rc;
+
+use losk_core::Token;
+
 use crate::ast::Stmt;
 use crate::env::Environment;
 use crate::error::Error;
 use crate::interpreter::Interpreter;
 use crate::value::Value;
-use losk_core::Token;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fmt::{Debug, Display, Formatter};
-use std::rc::Rc;
 
 #[derive(Debug, PartialEq)]
 pub(crate) enum CallableType {

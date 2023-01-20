@@ -1,4 +1,4 @@
-use phf::{phf_map, Map};
+use phf::{Map, phf_map};
 
 use crate::error::Error;
 use crate::token::{Literal, Token, Type};

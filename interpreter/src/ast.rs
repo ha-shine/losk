@@ -1,7 +1,9 @@
+use std::rc::Rc;
+
+use losk_core::Token;
+
 use crate::error::Error;
 use crate::value::Value;
-use losk_core::Token;
-use std::rc::Rc;
 
 // Currently tokens are cloned in every creation (stmt or expr) because they are not that
 // expensive to do so, and the cloning are done during parsing stage only.

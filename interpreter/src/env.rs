@@ -1,7 +1,8 @@
-use crate::value::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
+use crate::value::Value;
 
 #[derive(Debug)]
 pub(crate) struct Environment {
@@ -87,10 +88,11 @@ impl Environment {
 
 #[cfg(test)]
 mod tests {
-    use crate::env::{Environment, UndefinedVariable};
-    use crate::value::Value;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    use crate::env::{Environment, UndefinedVariable};
+    use crate::value::Value;
 
     #[test]
     fn test_define_and_get() {

@@ -1,6 +1,8 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use losk_core::Scanner;
 use std::io;
+
+use criterion::{Criterion, criterion_group, criterion_main};
+
+use losk_core::Scanner;
 use vm::{Compiler, VM};
 
 fn benchmark(c: &mut Criterion) {

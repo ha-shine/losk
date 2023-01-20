@@ -1,6 +1,7 @@
-use crate::vm::StackValue;
 use std::time::{SystemTime, UNIX_EPOCH};
+
 use crate::object::NativeValue;
+use crate::vm::StackValue;
 
 pub(super) fn clock(_: &[StackValue]) -> Option<NativeValue> {
     let start = SystemTime::now();

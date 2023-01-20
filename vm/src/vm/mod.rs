@@ -1,20 +1,23 @@
-mod error;
-pub mod native;
-pub mod object;
-mod types;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::fmt;
+use std::io::Write;
+use std::rc::Rc;
+
+use intrusive_collections::LinkedList;
+
+use native::clock;
 
 use crate::chunk::*;
 use crate::object::{Closure, Function, NativeFunction, NativeValue};
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
-use intrusive_collections::LinkedList;
-use native::clock;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::fmt;
-use std::io::Write;
-use std::rc::Rc;
+
+mod error;
+pub mod native;
+pub mod object;
+mod types;
 
 const DEFAULT_STACK: usize = 256;
 const FRAMES_MAX: usize = 256;
@@ -118,9 +121,8 @@ impl<'a> VM<'a> {
             slots: 0,
         };
         self.frame_count += 1;
-        self.interpret()
 
-        // TODO: Reset the VM state
+        self.interpret()
     }
 
     fn interpret(&mut self) -> VmResult<()> {
@@ -569,10 +571,12 @@ impl<'a> VM<'a> {
 // These probably should be integration tests
 #[cfg(test)]
 mod tests {
+    use std::str;
+
+    use losk_core::Scanner;
+
     use crate::compiler::Compiler;
     use crate::vm::VM;
-    use losk_core::Scanner;
-    use std::str;
 
     fn test_program(src: &str, out: Option<&str>, err: Option<&str>) {
         println!("Testing source:\n{}", src);

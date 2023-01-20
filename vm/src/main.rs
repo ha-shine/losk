@@ -1,8 +1,9 @@
-use losk_core::Scanner;
-use std::fs::File;
-use std::io::{stdout, Read};
-use std::process::exit;
 use std::{env, io};
+use std::fs::File;
+use std::io::{Read, stdout};
+use std::process::exit;
+
+use losk_core::Scanner;
 use vm::{Compiler, VM};
 
 fn read_file(name: &str) -> Result<String, io::Error> {

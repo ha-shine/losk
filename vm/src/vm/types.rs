@@ -1,11 +1,13 @@
-use crate::chunk::Instruction;
-use crate::object::{Closure, NativeFunction};
-use crate::vm::error::RuntimeError;
-use crate::Function;
-use intrusive_collections::{intrusive_adapter, LinkedListLink};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::{Rc, Weak};
+
+use intrusive_collections::{intrusive_adapter, LinkedListLink};
+
+use crate::chunk::Instruction;
+use crate::Function;
+use crate::object::{Closure, NativeFunction};
+use crate::vm::error::RuntimeError;
 
 #[derive(Clone)]
 pub(super) enum StackValue {

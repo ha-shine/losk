@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+
+use losk_core::Token;
+
 use crate::ast::{Expr, ExprVisitor, Stmt, StmtVisitor};
 use crate::error::Error;
 use crate::interpreter::Interpreter;
 use crate::parser::StmtStream;
 use crate::value::Value;
-use losk_core::Token;
-use std::collections::HashMap;
 
 enum State {
     Defined,

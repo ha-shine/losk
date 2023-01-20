@@ -1,9 +1,10 @@
+use losk_core::{Token, TokenStream, Type};
+
+use crate::{CompileError, Compiler, Function};
 use crate::chunk::{Constant, Instruction};
 use crate::compiler::*;
 use crate::object::Upvalue;
 use crate::value::ConstantValue;
-use crate::{CompileError, Compiler, Function};
-use losk_core::{Token, TokenStream, Type};
 
 pub(super) struct Context<'token> {
     pub(super) stream: TokenStream<'token>,
