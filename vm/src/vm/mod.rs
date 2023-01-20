@@ -51,7 +51,8 @@ pub struct VM<'a> {
 // Be aware the VM will leak the function passed into to create a static reference to it and
 // it will not be reclaimed
 impl<'a> VM<'a> {
-    pub fn new(stdout: &'a mut dyn Write, main: Function) -> Self {
+    pub fn new(stdout: &'a mut dyn Write) -> Self {
+        // In the
         let mut vm = VM {
             stack: Vec::with_capacity(DEFAULT_STACK),
             objects: LinkedList::new(ListAdapter::new()),
@@ -60,18 +61,6 @@ impl<'a> VM<'a> {
             globals: HashMap::new(),
             stdout,
         };
-
-        let leaked = Box::leak(Box::new(main));
-        let main_closure = vm.make_closure(leaked);
-        let main = Object::new(HeapValue::closure(main_closure));
-        vm.objects.push_front(main.clone());
-        vm.stack.push(StackValue::Obj(Rc::downgrade(&main)));
-        vm.frames[0] = CallFrame {
-            fun: Rc::downgrade(&main),
-            ip: 0,
-            slots: 0,
-        };
-        vm.frame_count += 1;
 
         let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
         vm.objects.push_front(clock.clone());
@@ -114,7 +103,27 @@ impl<'a> VM<'a> {
         }
     }
 
-    pub fn run(&mut self) -> VmResult<()> {
+    // Once I switch over to using pointers, I can easily assume the main function will be
+    // passed by a reference and hence will be valid for the entirety of this `run` function.
+    // All the functions can be read with a pointer in that case.
+    pub fn run(&mut self, main: Function) -> VmResult<()> {
+        let leaked = Box::leak(Box::new(main));
+        let main_closure = self.make_closure(leaked);
+        let main = Object::new(HeapValue::closure(main_closure));
+        self.objects.push_front(main.clone());
+        self.stack.push(StackValue::Obj(Rc::downgrade(&main)));
+        self.frames[0] = CallFrame {
+            fun: Rc::downgrade(&main),
+            ip: 0,
+            slots: 0,
+        };
+        self.frame_count += 1;
+        self.interpret()
+
+        // TODO: Reset the VM state
+    }
+
+    fn interpret(&mut self) -> VmResult<()> {
         loop {
             // Instruction is cheap to copy, though the run loop is very sensitive to performance
             // and not sure this would affect the runtime severely.
@@ -573,8 +582,8 @@ mod tests {
         let fun = compiler.compile(scanner.scan_tokens(src)).unwrap();
         let mut output: Vec<u8> = Vec::new();
 
-        let mut vm = VM::new(&mut output, fun);
-        let result = vm.run();
+        let mut vm = VM::new(&mut output);
+        let result = vm.run(fun);
 
         match (result, err) {
             (Err(out), Some(err)) => assert_eq!(err, out.to_string()),

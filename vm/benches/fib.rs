@@ -13,8 +13,8 @@ fn benchmark(c: &mut Criterion) {
 
     c.bench_function("fib 20", |b| {
         b.iter(|| {
-            let mut vm = VM::new(&mut sink, compiled.clone());
-            vm.run().unwrap();
+            let mut vm = VM::new(&mut sink);
+            vm.run(compiled.clone()).unwrap();
         })
     });
 }

@@ -43,8 +43,8 @@ fn main() {
     };
 
     let out = &mut stdout();
-    let mut vm = VM::new(out, fun);
-    if let Err(err) = vm.run() {
+    let mut vm = VM::new(out);
+    if let Err(err) = vm.run(fun) {
         eprintln!("{}", err);
         exit(1);
     }
