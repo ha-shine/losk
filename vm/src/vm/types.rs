@@ -5,9 +5,9 @@ use std::rc::{Rc, Weak};
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 use crate::chunk::Instruction;
-use crate::Function;
 use crate::object::{Closure, NativeFunction};
 use crate::vm::error::RuntimeError;
+use crate::Function;
 
 #[derive(Clone)]
 pub(super) enum StackValue {
@@ -60,15 +60,11 @@ impl Debug for StackValue {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(super) enum HeapValue {
     Str(String),
     Closure(Closure),
     NativeFunction(NativeFunction),
-
-    // Object owns the heap value and the heap value itself being able to point to another
-    // object means it's easy to make a cycle if I use a strong RC here.
-    Upvalue(Weak<Object>),
 }
 
 impl HeapValue {
@@ -83,15 +79,6 @@ impl HeapValue {
     pub(super) fn native(fun: NativeFunction) -> HeapValue {
         HeapValue::NativeFunction(fun)
     }
-
-    pub(super) fn upvalue(obj: Weak<Object>) -> HeapValue {
-        let mut strong = obj.upgrade().unwrap();
-        while let HeapValue::Upvalue(val) = &strong.value {
-            strong = val.upgrade().unwrap();
-        }
-
-        HeapValue::Upvalue(Rc::downgrade(&strong))
-    }
 }
 
 impl Display for HeapValue {
@@ -100,20 +87,6 @@ impl Display for HeapValue {
             HeapValue::Str(val) => write!(f, "{}", val),
             HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
             HeapValue::Closure(closure) => write!(f, "<Function {}>", closure.fun.name),
-            HeapValue::Upvalue(upvalue) => write!(f, "{}", upvalue.upgrade().unwrap().value),
-        }
-    }
-}
-
-impl PartialEq for HeapValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (HeapValue::Str(l), HeapValue::Str(r)) => l == r,
-            (HeapValue::Closure(l), HeapValue::Closure(r)) => l == r,
-            (HeapValue::NativeFunction(l), HeapValue::NativeFunction(r)) => l == r,
-            (HeapValue::Upvalue(l), r) => &l.upgrade().unwrap().value == r,
-            (l, HeapValue::Upvalue(r)) => l == &r.upgrade().unwrap().value,
-            _ => false,
         }
     }
 }

@@ -129,7 +129,16 @@ pub(super) struct Closure {
     // Should the variables be final if they were to be captured in a closure like Java?
     // It would certainly make the code more performant since now I can just store those objects
     // in this closure.
-    // Captured are a pointer to value (which is StackValue)
+    //
+    // In the text book, the captured (called `upvalues` verbatim) are pointers to original
+    // stack value. I can't do this easily here because of Rust without re-writing a big
+    // chunk of this.
+    // The good thing about this is that for normal stack values, the values are copied, and
+    // modification to the captured objects will not affect the original. This even works for
+    // strings because strings can only be concatenated and the results are new heap allocated
+    // string and the pointer to there are captured. The original pointer is not modified while
+    // the captured one will point to new string after concatenation.
+    // With classes, this will be an issue because mutation to objects will not create new objects.
     pub(super) captured: RefCell<Vec<StackValue>>,
 }
 

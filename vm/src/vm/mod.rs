@@ -310,6 +310,16 @@ impl<'a> VM<'a> {
                         return Err(self.error(format_args!("Can only call functions and classes")));
                     }
                 }
+
+                // Maybe a clearer way is to separate the input and output type of constant.
+                // Even though functions are constant too, I think it would be more readable if the
+                // chunk stores the constants internally as the same value but have two separate
+                // methods with different return types for normal constant values and functions.
+                // And also maybe use Box<Function> for functions since that's the heaviest
+                // variant in the ConstantValue enum.
+                // I can use two containers for functions and constant values, that would make
+                // compilation a bit more complicated and might not be a good thing for performance
+                // due to cache locality (or lack thereof) between the two containers.
                 Instruction::Closure(Constant(idx)) => {
                     let val = self
                         .current_frame()
