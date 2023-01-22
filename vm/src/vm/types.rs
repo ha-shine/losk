@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::rc::{Rc, Weak};
@@ -55,7 +55,7 @@ pub(super) enum HeapValue {
     Str(String),
     Closure(Closure),
     NativeFunction(NativeFunction),
-    
+
     // Several reasons why a interior mutability is needed here. The set_upvalue instruction
     // mutate the value this holds with whatever value is currently on top of the stack. And
     // when closed, the value needs to be updated with captured upvalue.

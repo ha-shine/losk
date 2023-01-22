@@ -663,6 +663,10 @@ impl<'a> VM<'a> {
         obj
     }
 
+    // Close all the upvalues that are above the stack index given in the argument.
+    // The open upvalues are ordered by their stack position from the highest to lowest. The loop
+    // will stop as soon as the cursor reaches an open value whose stack position is lower than the
+    // given index.
     fn close_upvalues(&mut self, last_index: usize) {
         let mut cursor = self.open_upvalues.cursor_mut();
         cursor.move_next();
@@ -674,7 +678,7 @@ impl<'a> VM<'a> {
                     _ => panic!("Found closed upvalue in open upvalue list"),
                 };
 
-                if index > last_index {
+                if index < last_index {
                     break;
                 }
 
@@ -689,13 +693,13 @@ impl<'a> VM<'a> {
     }
 
     // This will return the stack object the given upvalue object is pointing to, which means
-    // the original stack value if it's an open upvalue, or pointer to the object if it's closed.
+    // the original stack value if it's an open upvalue, or the closed value itself.
     // The method assumes the given object is an upvalue, and panic if not.
     fn get_upvalue(&self, obj: &Rc<Object>) -> StackValue {
         match &obj.value {
             HeapValue::Upvalue(val) => match &*val.borrow() {
                 UpvalueState::Open(pos) => self.peek_stack(*pos).clone(),
-                UpvalueState::Closed(_) => StackValue::Obj(Rc::downgrade(obj)),
+                UpvalueState::Closed(val) => val.clone(),
             },
             _ => panic!("Object is not an upvalue"),
         }
