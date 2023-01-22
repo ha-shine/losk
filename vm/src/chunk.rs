@@ -14,7 +14,6 @@ pub(crate) enum Instruction {
     LiteralFalse,
     LiteralNil,
     Pop,
-    PopN(usize),
     GetGlobal(Constant),
     DefineGlobal(Constant),
     SetGlobal(Constant),
@@ -37,6 +36,7 @@ pub(crate) enum Instruction {
     Loop(JumpDist),
     Call(ArgCount),
     Closure(Constant),
+    CloseUpvalue,
     Return,
 }
 

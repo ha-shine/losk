@@ -1,11 +1,12 @@
+use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::{Debug, Formatter};
 use std::rc::{Rc, Weak};
 
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 use crate::chunk::Instruction;
-use crate::object::{Closure, NativeFunction};
+use crate::object::{Closure, NativeFunction, UpvalueState};
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
@@ -38,23 +39,12 @@ impl PartialEq for StackValue {
     }
 }
 
-impl Display for StackValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            StackValue::Num(val) => write!(f, "{}", val),
-            StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{}", val.upgrade().unwrap().value),
-            StackValue::Nil => write!(f, "nil"),
-        }
-    }
-}
-
 impl Debug for StackValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{:?} -> {}", val, val.upgrade().unwrap().value),
+            StackValue::Obj(val) => write!(f, "{:?} -> {:?}", val, val.upgrade().unwrap().value),
             StackValue::Nil => write!(f, "nil"),
         }
     }
@@ -65,6 +55,11 @@ pub(super) enum HeapValue {
     Str(String),
     Closure(Closure),
     NativeFunction(NativeFunction),
+    
+    // Several reasons why a interior mutability is needed here. The set_upvalue instruction
+    // mutate the value this holds with whatever value is currently on top of the stack. And
+    // when closed, the value needs to be updated with captured upvalue.
+    Upvalue(RefCell<UpvalueState>),
 }
 
 impl HeapValue {
@@ -81,19 +76,10 @@ impl HeapValue {
     }
 }
 
-impl Display for HeapValue {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            HeapValue::Str(val) => write!(f, "{}", val),
-            HeapValue::NativeFunction(fun) => write!(f, "<NativeFunction {}>", fun.name),
-            HeapValue::Closure(closure) => write!(f, "<Function {}>", closure.fun.name),
-        }
-    }
-}
-
 #[derive(Debug)]
 pub(super) struct Object {
-    pub(super) link: LinkedListLink,
+    pub(super) heap_link: LinkedListLink,
+    pub(super) upvalue_link: LinkedListLink,
     pub(super) value: HeapValue,
 }
 
@@ -103,12 +89,14 @@ impl PartialEq for Object {
     }
 }
 
-intrusive_adapter!(pub(super) ListAdapter = Rc<Object>: Object { link: LinkedListLink });
+intrusive_adapter!(pub(super) HeapListAdapter = Rc<Object>: Object { heap_link: LinkedListLink });
+intrusive_adapter!(pub(super) UpvalueListAdapter = Rc<Object>: Object { upvalue_link: LinkedListLink });
 
 impl Object {
     pub(super) fn new(val: HeapValue) -> Rc<Object> {
         Rc::new(Object {
-            link: LinkedListLink::new(),
+            heap_link: LinkedListLink::new(),
+            upvalue_link: LinkedListLink::new(),
             value: val,
         })
     }

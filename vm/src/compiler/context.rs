@@ -94,11 +94,14 @@ impl<'token> Context<'token> {
         }
 
         let result = match self.enclosing.as_mut().unwrap().resolve_variable(name)? {
-            // It's a local variable from enclosing, so captured it in here
-            LocalResolution::Local(local) => self
-                .fun
-                .add_upvalue(Upvalue::new(local.0, true))
-                .map(LocalResolution::UpValue),
+            // It's a local variable from enclosing, so captured it as an upvalue in the current
+            // function and mark it in the enclosing function as captured.
+            LocalResolution::Local(local) => {
+                self.enclosing.as_mut().unwrap().locals[local.0].is_captured = true;
+                self.fun
+                    .add_upvalue(Upvalue::new(local.0, true))
+                    .map(LocalResolution::UpValue)
+            }
 
             // It's already captured in the enclosing function, capture it again as an upvalue
             LocalResolution::UpValue(upvalue) => self
@@ -158,14 +161,15 @@ impl<'token> Context<'token> {
     pub(super) fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
-        let mut n = 0;
         while !self.locals.is_empty() && self.locals.last().unwrap().depth > self.scope_depth {
-            self.locals.pop();
-            n += 1;
-        }
-
-        if n > 0 {
-            self.add_instruction(Instruction::PopN(n));
+            // If the local is captured by an inner function, that variable needs to be hoisted on
+            // to the heap
+            let last = self.locals.pop().unwrap();
+            if last.is_captured {
+                self.add_instruction(Instruction::CloseUpvalue);
+            } else {
+                self.add_instruction(Instruction::Pop);
+            }
         }
     }
 

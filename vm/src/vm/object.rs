@@ -1,8 +1,10 @@
 use std::fmt::{Debug, Formatter};
+use std::rc::Rc;
 
 use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
 use crate::limits::UPVALUE_LIMIT;
 use crate::value::ConstantValue;
+use crate::vm::types::Object;
 use crate::vm::StackValue;
 
 pub(super) type NativeFn = fn(&[StackValue]) -> Option<NativeValue>;
@@ -119,11 +121,32 @@ impl NativeFunction {
 #[derive(Debug)]
 pub(super) struct Closure {
     pub(super) fun: &'static Function,
-    pub(super) captured: Vec<StackPosition>,
+
+    // This should be a vector of pointers to upvalue objects (which contains stack position).
+    // The VM will hold onto a bunch of opened upvalue objects in a separate linked list that is
+    // different from the current heap (and the linked list will be sorted by the stack position).
+    // Whenever the close upvalue instruction is executed, some of those upvalues will be dropped
+    // from the linked list and be updated with pointer to newly hoisted upvalue on the heap.
+    // Also whenever the callframe is popped, every open upvalues with index higher than the
+    // callframe's slots are removed.
+    //
+    // Should these be weak pointers?
+    // So I can use enum for these - Open(StackPosition), Closed(StackValue)
+    // Multiple upvalues referring to the same stack position will point to the same object.
+    // I'm not sure if it's possible to create a cycle through upvalues because they are using Rc.
+    // Theoretically, an upvalue could point another object which contains a field to upvalue, though
+    // I haven't thought about the problem thoroughly.
+    pub(super) captured: Vec<Rc<Object>>,
 }
 
 impl PartialEq for Closure {
     fn eq(&self, other: &Self) -> bool {
         std::ptr::eq(self, other)
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub(super) enum UpvalueState {
+    Open(StackPosition),
+    Closed(StackValue),
 }

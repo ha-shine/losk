@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
@@ -8,7 +10,7 @@ use intrusive_collections::LinkedList;
 use native::clock;
 
 use crate::chunk::*;
-use crate::object::{Closure, Function, NativeFunction, NativeValue};
+use crate::object::{Closure, Function, NativeFunction, NativeValue, UpvalueState};
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
@@ -31,12 +33,17 @@ pub struct VM<'a> {
     // Note that the heap objects need to be mutable because of two reasons -
     //   - Garbage collector will mark the objects
     //   - Closure's captured values will be updated with `SetUpvalue` instruction
-    objects: LinkedList<ListAdapter>,
+    objects: LinkedList<HeapListAdapter>,
 
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
     // when the VM starts.
     frames: Vec<CallFrame>,
+
+    // List of upvalues that have not been closed. They are objects here because there's not a good
+    // way to point directly to the UpvalueObject unless I go the route of double indirection
+    // by wrapping the UpvalueObject itself in an Rc.
+    open_upvalues: LinkedList<UpvalueListAdapter>,
 
     // Globals are used to map between a variable defined on the global scope to it's corresponding
     // value. The values are of type `StackValue` because the globals can be mapped to either stack
@@ -56,8 +63,9 @@ impl<'a> VM<'a> {
         // In the
         let mut vm = VM {
             stack: Vec::with_capacity(DEFAULT_STACK),
-            objects: LinkedList::new(ListAdapter::new()),
+            objects: LinkedList::new(HeapListAdapter::new()),
             frames: Vec::with_capacity(FRAMES_MAX),
+            open_upvalues: LinkedList::new(UpvalueListAdapter::new()),
             globals: HashMap::new(),
             stdout,
         };
@@ -69,7 +77,7 @@ impl<'a> VM<'a> {
         vm
     }
 
-    fn make_closure(&self, fun: &'static Function) -> Closure {
+    fn make_closure(&mut self, fun: &'static Function) -> Closure {
         let mut captured = Vec::with_capacity(fun.upvalue_count);
         if fun.upvalue_count == 0 {
             return Closure { fun, captured };
@@ -78,18 +86,39 @@ impl<'a> VM<'a> {
         // Early return took care of the main <script>, so frame count will be definitely more than
         // 1. And the parent always is a closure because it's interpreting a closure instruction.
         let p_frame = self.current_frame();
+        let slots = p_frame.slots;
         let p_obj = &p_frame.fun;
         let p_closure = match &p_obj.value {
             HeapValue::Closure(closure) => closure,
             _ => panic!("Unreachable"),
         };
 
-        for upvalue in (0..fun.upvalue_count).map(|idx| fun.upvalues[idx]) {
-            if upvalue.is_local {
-                captured.push(StackPosition::Index(p_frame.slots + upvalue.index));
-            } else {
-                // The values must have been captured in parent CallFrame
-                captured.push(p_closure.captured[upvalue.index]);
+        // Another workaround for Rust's borrow checker. p_closure is self's field and it's been
+        // borrowed immutably, but `capture_upvalue` requires a mutable borrow to create a new
+        // upvalue object and add it to the upvalue list. This can't be done in this because
+        // the `capture_upvalue` do other heavy-lifting stuffs like moving the cursor to correct place.
+        enum UpvalueOrStackPosition {
+            Upvalue(Rc<Object>),
+            Position(StackPosition),
+        }
+
+        // A bit disappointing that I need a temporary vector just for this. If this proves to be
+        // too much of a hit on performance, I can always copy the code inline.
+        let temp: Vec<_> = (0..fun.upvalue_count)
+            .map(|idx| fun.upvalues[idx])
+            .map(|upvalue| {
+                if upvalue.is_local {
+                    UpvalueOrStackPosition::Position(StackPosition::Index(slots + upvalue.index))
+                } else {
+                    UpvalueOrStackPosition::Upvalue(p_closure.captured[upvalue.index].clone())
+                }
+            })
+            .collect();
+
+        for value in temp {
+            match value {
+                UpvalueOrStackPosition::Upvalue(val) => captured.push(val),
+                UpvalueOrStackPosition::Position(pos) => captured.push(self.capture_upvalue(pos)),
             }
         }
 
@@ -135,9 +164,6 @@ impl<'a> VM<'a> {
                 Instruction::LiteralNil => self.push(StackValue::Nil),
                 Instruction::Pop => {
                     self.pop();
-                }
-                Instruction::PopN(n) => {
-                    self.pop_n(n);
                 }
                 Instruction::GetGlobal(Constant(index)) => {
                     let name = match self
@@ -187,7 +213,7 @@ impl<'a> VM<'a> {
 
                 Instruction::GetUpvalue(UpvalueIndex(index)) => {
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
-                        let value = self.peek_stack(closure.captured[index]).clone();
+                        let value = self.get_upvalue(&closure.captured[index]);
                         self.push(value);
                     } else {
                         // This means the compiler borked the compilation
@@ -197,7 +223,7 @@ impl<'a> VM<'a> {
                 Instruction::SetUpvalue(UpvalueIndex(index)) => {
                     let top = self.peek_stack(StackPosition::RevOffset(0)).clone();
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
-                        self.put_stack(closure.captured[index], top);
+                        self.set_upvalue(closure.captured[index].clone(), top);
                     } else {
                         panic!("Unreachable")
                     }
@@ -217,7 +243,7 @@ impl<'a> VM<'a> {
                 Instruction::Divide => self.execute_binary_op(Self::div)?,
                 Instruction::Print => {
                     let val = self.pop();
-                    writeln!(self.stdout, "{}", val).unwrap();
+                    self.print_stack_value(val);
                 }
                 Instruction::JumpIfFalse(JumpDist(dist)) => {
                     // The pointer has already been incremented by 1 before this match statement,
@@ -312,10 +338,14 @@ impl<'a> VM<'a> {
 
                     if let Some(ConstantValue::Fun(fun)) = val {
                         let closure = self.make_closure(fun);
-                        self.allocate(HeapValue::Closure(closure));
+                        self.allocate_and_push(HeapValue::Closure(closure));
                     } else {
                         panic!("Unreachable")
                     }
+                }
+                Instruction::CloseUpvalue => {
+                    self.close_upvalues(self.stack.len() - 1);
+                    self.pop();
                 }
                 Instruction::Return => {
                     // Ensure the current frame's closure is dropped after returning.
@@ -325,6 +355,8 @@ impl<'a> VM<'a> {
                     // pushed onto the top of the stack.
                     let result = self.pop();
                     let slots = frame.slots;
+                    self.close_upvalues(slots);
+
                     if self.frames.is_empty() {
                         self.pop();
                         return Ok(());
@@ -377,23 +409,9 @@ impl<'a> VM<'a> {
         match constant {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
-            ConstantValue::Str(val) => self.allocate(HeapValue::str(val.clone())),
+            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::str(val.clone())),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => panic!("Unreachable"),
-        }
-
-        Ok(())
-    }
-
-    fn store_native_value(&mut self, value: NativeValue) -> VmResult<()> {
-        match ConstantValue::from(value) {
-            ConstantValue::Double(val) => self.push(StackValue::Num(val)),
-            ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
-            ConstantValue::Str(val) => self.allocate(HeapValue::str(val)),
-            ConstantValue::Nil => self.push(StackValue::Nil),
-            ConstantValue::Fun(_) => {
-                return Err(self.error(format_args!("Invalid return value from native function")))
-            }
         }
 
         Ok(())
@@ -422,7 +440,7 @@ impl<'a> VM<'a> {
                 Ok(())
             }
             Ok(StackOrHeap::Heap(val)) => {
-                self.allocate(val);
+                self.allocate_and_push(val);
                 Ok(())
             }
             Err(msg) => Err(self.error(format_args!("{}", msg))),
@@ -515,6 +533,188 @@ impl<'a> VM<'a> {
         }
     }
 
+    fn store_native_value(&mut self, value: NativeValue) -> VmResult<()> {
+        match ConstantValue::from(value) {
+            ConstantValue::Double(val) => self.push(StackValue::Num(val)),
+            ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
+            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::str(val)),
+            ConstantValue::Nil => self.push(StackValue::Nil),
+            ConstantValue::Fun(_) => {
+                return Err(self.error(format_args!("Invalid return value from native function")))
+            }
+        }
+
+        Ok(())
+    }
+
+    fn print_stack_value(&mut self, val: StackValue) {
+        match val {
+            StackValue::Num(val) => {
+                writeln!(self.stdout, "{}", val).unwrap();
+            }
+            StackValue::Bool(val) => {
+                writeln!(self.stdout, "{}", val).unwrap();
+            }
+            StackValue::Obj(object) => self.print_heap_value(&object.upgrade().unwrap().value),
+            StackValue::Nil => {
+                writeln!(self.stdout, "nil").unwrap();
+            }
+        };
+    }
+
+    fn print_heap_value(&mut self, val: &HeapValue) {
+        match val {
+            HeapValue::Str(val) => {
+                writeln!(self.stdout, "{}", val).unwrap();
+            }
+            HeapValue::Closure(val) => {
+                writeln!(self.stdout, "<Function {}>", val.fun.name).unwrap();
+            }
+            HeapValue::NativeFunction(val) => {
+                writeln!(self.stdout, "<NativeFunction {}>", val.name).unwrap();
+            }
+            HeapValue::Upvalue(val) => {
+                match &*val.borrow() {
+                    UpvalueState::Open(pos) => {
+                        self.print_stack_value(self.peek_stack(*pos).clone())
+                    }
+                    UpvalueState::Closed(val) => self.print_stack_value(val.clone()),
+                };
+            }
+        };
+    }
+
+    fn capture_upvalue(&mut self, pos: StackPosition) -> Rc<Object> {
+        let index = self.stack_pos_to_index(pos);
+        let mut cursor = self.open_upvalues.cursor_mut();
+        cursor.move_next();
+
+        // The loop will return an Rc of object that should be inserted into the upvalues.
+        // It will also ensure the cursor is always pointing to a position right next to where the
+        // object go so that the object should use the cursor's `insert_before`. A second value
+        // indicates whether the object is a newly created one, and if so it should be allocated
+        // on the heap.
+        // This is because of the restriction with Rust where `self` can't be borrowed twice,
+        // once with the cursor and again in allocate_object.
+        let (obj, is_new) = loop {
+            // Because of more rust (and intrusive pointer) restrictions, I have to extract
+            // the value of comparison out of this and do the cursor processing after this. Here,
+            // `get` is borrowed immutably, but I need to remove the node (or move to the next)
+            // node which requires a mutable cursor.
+            let comparison = match cursor.get() {
+                Some(Object {
+                    value: HeapValue::Upvalue(val),
+                    ..
+                }) => match &*val.borrow() {
+                    UpvalueState::Open(StackPosition::Index(cursor_index)) => {
+                        cursor_index.cmp(&index)
+                    }
+                    _ => panic!("Unreachable"),
+                },
+
+                // If current is null, that means it's the end of the list. Create a new node and add
+                // it to the list
+                None => {
+                    break (
+                        Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos)))),
+                        true,
+                    );
+                }
+
+                // This is a cursor for open upvalues, so it's definitely a panic to see anything
+                // else. Also, upvalues are captured as purely stack indices, so anything else
+                // is a runtime error.
+                _ => panic!("Unreachable"),
+            };
+
+            match comparison {
+                // The current cursor's index is less than the index of the upvalue being
+                // captured. That means a new upvalue needs to be created, and inserted into
+                // the previous place. The open upvalue objects are sorted based on their
+                // stack position, from topmost value to bottommost.
+                Ordering::Less => {
+                    break (
+                        Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos)))),
+                        true,
+                    );
+                }
+
+                // Unfortunately, due to the limitation of intrusive linked list, I can't seem
+                // to be able to get the reference to the container (i.e an Rc of object),
+                // but only to the contained &Object. As a work around, it's necessary to remove
+                // the current node, clone the removed Rc and insert it back again.
+                Ordering::Equal => {
+                    // Now cursor is pointing to the one after this
+                    let removed = cursor.remove().unwrap();
+                    break (removed, false);
+                }
+
+                Ordering::Greater => {
+                    cursor.move_next();
+                }
+            }
+        };
+
+        cursor.insert_before(obj.clone());
+        if is_new {
+            self.objects.push_front(obj.clone());
+        }
+
+        obj
+    }
+
+    fn close_upvalues(&mut self, last_index: usize) {
+        let mut cursor = self.open_upvalues.cursor_mut();
+        cursor.move_next();
+
+        while !cursor.is_null() {
+            if let HeapValue::Upvalue(val) = &cursor.get().unwrap().value {
+                let index = match &*val.borrow() {
+                    UpvalueState::Open(StackPosition::Index(index)) => *index,
+                    _ => panic!("Found closed upvalue in open upvalue list"),
+                };
+
+                if index > last_index {
+                    break;
+                }
+
+                let item = self.stack[index].clone();
+                *val.borrow_mut() = UpvalueState::Closed(item);
+
+                cursor.remove();
+            } else {
+                panic!("Found non upvalue item in upvalue list")
+            }
+        }
+    }
+
+    // This will return the stack object the given upvalue object is pointing to, which means
+    // the original stack value if it's an open upvalue, or pointer to the object if it's closed.
+    // The method assumes the given object is an upvalue, and panic if not.
+    fn get_upvalue(&self, obj: &Rc<Object>) -> StackValue {
+        match &obj.value {
+            HeapValue::Upvalue(val) => match &*val.borrow() {
+                UpvalueState::Open(pos) => self.peek_stack(*pos).clone(),
+                UpvalueState::Closed(_) => StackValue::Obj(Rc::downgrade(obj)),
+            },
+            _ => panic!("Object is not an upvalue"),
+        }
+    }
+
+    fn set_upvalue(&mut self, obj: Rc<Object>, value: StackValue) {
+        match &obj.value {
+            HeapValue::Upvalue(val) => {
+                if let UpvalueState::Open(pos) = &*val.borrow() {
+                    self.put_stack(*pos, value);
+                    return;
+                }
+
+                *val.borrow_mut() = UpvalueState::Closed(value);
+            }
+            _ => panic!("Object is not an upvalue"),
+        };
+    }
+
     fn peek_stack(&self, pos: StackPosition) -> &StackValue {
         let index = self.stack_pos_to_index(pos);
         &self.stack[index]
@@ -546,12 +746,16 @@ impl<'a> VM<'a> {
         self.stack.drain(start..);
     }
 
-    fn allocate(&mut self, val: HeapValue) {
-        let hval = Object::new(val);
+    fn allocate_and_push(&mut self, val: HeapValue) {
+        let hval = self.allocate_object(val);
         let sval = StackValue::Obj(Rc::downgrade(&hval));
-
-        self.objects.push_front(hval);
         self.stack.push(sval);
+    }
+
+    fn allocate_object(&mut self, val: HeapValue) -> Rc<Object> {
+        let value = Object::new(val);
+        self.objects.push_front(value.clone());
+        value
     }
 
     fn current_frame(&self) -> &CallFrame {
