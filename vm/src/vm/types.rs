@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 use std::fmt;
 use std::fmt::{Debug, Formatter};
-use std::rc::{Rc, Weak};
+use std::rc::Rc;
 
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
@@ -10,7 +10,7 @@ use crate::object::{Closure, NativeFunction, UpvalueState};
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub(super) enum StackValue {
     Num(f64),
     Bool(bool),
@@ -19,24 +19,11 @@ pub(super) enum StackValue {
     // Plus doing this as reference means there will be a sea of lifetime indicators in here.
     // This probably should be refactored out into its own RefCell-ish type, but this will suffice
     // for now.
-    // The weak pointers are unwrapped because they will always point to the un-dropped RC
-    // which resides in the VM's heap store.
-    Obj(Weak<Object>),
+    // They can be strong pointers for the time being because the stack is a vector and values
+    // will be dropped according as long as they go out of scope. It will probably not be possible
+    // to create a cycle with classes since class will own the weak pointers instead.
+    Obj(Rc<Object>),
     Nil,
-}
-
-impl PartialEq for StackValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (StackValue::Num(l), StackValue::Num(r)) => l == r,
-            (StackValue::Bool(l), StackValue::Bool(r)) => l == r,
-            (StackValue::Obj(l), StackValue::Obj(r)) => {
-                l.upgrade().unwrap() == r.upgrade().unwrap()
-            }
-            (StackValue::Nil, StackValue::Nil) => true,
-            _ => false,
-        }
-    }
 }
 
 impl Debug for StackValue {
@@ -44,7 +31,7 @@ impl Debug for StackValue {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Obj(val) => write!(f, "{:?} -> {:?}", val, val.upgrade().unwrap().value),
+            StackValue::Obj(val) => write!(f, "{:?} -> {:?}", val, val.value),
             StackValue::Nil => write!(f, "nil"),
         }
     }

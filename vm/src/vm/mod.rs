@@ -73,7 +73,7 @@ impl<'a> VM<'a> {
         let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
         vm.objects.push_front(clock.clone());
         vm.globals
-            .insert("clock".to_string(), StackValue::Obj(Rc::downgrade(&clock)));
+            .insert("clock".to_string(), StackValue::Obj(clock));
         vm
     }
 
@@ -133,7 +133,7 @@ impl<'a> VM<'a> {
         let main_closure = self.make_closure(leaked);
         let main = Object::new(HeapValue::closure(main_closure));
         self.objects.push_front(main.clone());
-        self.stack.push(StackValue::Obj(Rc::downgrade(&main)));
+        self.stack.push(StackValue::Obj(main.clone()));
         self.frames.push(CallFrame {
             fun: main,
             ip: 0,
@@ -278,7 +278,6 @@ impl<'a> VM<'a> {
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
                     if let StackValue::Obj(obj) = self.peek_stack(StackPosition::RevOffset(count)) {
-                        let obj = obj.upgrade().unwrap();
                         match &obj.value {
                             HeapValue::Closure(closure) => {
                                 if count != closure.fun.arity {
@@ -289,7 +288,7 @@ impl<'a> VM<'a> {
                                 }
 
                                 self.frames.push(CallFrame {
-                                    fun: obj,
+                                    fun: obj.clone(),
                                     ip: 0,
                                     slots: self.stack.len() - count - 1,
                                 });
@@ -459,17 +458,15 @@ impl<'a> VM<'a> {
             (StackValue::Num(l), StackValue::Num(r)) => {
                 Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
             }
-            (StackValue::Obj(l), StackValue::Obj(r)) => {
-                match (&l.upgrade().unwrap().value, &r.upgrade().unwrap().value) {
-                    (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
-                        let mut res = String::with_capacity(lstr.len() + rstr.len());
-                        res += lstr;
-                        res += rstr;
-                        Ok(StackOrHeap::Heap(HeapValue::Str(res)))
-                    }
-                    _ => Err("Expect both operands to be either numbers or strings."),
+            (StackValue::Obj(l), StackValue::Obj(r)) => match (&l.value, &r.value) {
+                (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
+                    let mut res = String::with_capacity(lstr.len() + rstr.len());
+                    res += lstr;
+                    res += rstr;
+                    Ok(StackOrHeap::Heap(HeapValue::Str(res)))
                 }
-            }
+                _ => Err("Expect both operands to be either numbers or strings."),
+            },
             (_, _) => Err("Expect both operands to be either numbers or strings."),
         }
     }
@@ -555,7 +552,7 @@ impl<'a> VM<'a> {
             StackValue::Bool(val) => {
                 writeln!(self.stdout, "{}", val).unwrap();
             }
-            StackValue::Obj(object) => self.print_heap_value(&object.upgrade().unwrap().value),
+            StackValue::Obj(object) => self.print_heap_value(&object.value),
             StackValue::Nil => {
                 writeln!(self.stdout, "nil").unwrap();
             }
@@ -752,7 +749,7 @@ impl<'a> VM<'a> {
 
     fn allocate_and_push(&mut self, val: HeapValue) {
         let hval = self.allocate_object(val);
-        let sval = StackValue::Obj(Rc::downgrade(&hval));
+        let sval = StackValue::Obj(hval);
         self.stack.push(sval);
     }
 
