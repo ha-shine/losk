@@ -10,6 +10,7 @@ use intrusive_collections::LinkedList;
 use native::clock;
 
 use crate::chunk::*;
+use crate::limits::GC_HEAP_GROW_FACTOR;
 use crate::object::{Closure, Function, NativeFunction, NativeValue, UpvalueState};
 use crate::value::ConstantValue;
 use crate::vm::error::*;
@@ -54,6 +55,10 @@ pub struct VM<'a> {
 
     // The VM will write the output strings into this stdout
     stdout: &'a mut dyn Write,
+
+    // GC related fields
+    bytes_allocated: usize,
+    next_gc: usize,
 }
 
 // Be aware the VM will leak the function passed into to create a static reference to it and
@@ -68,6 +73,8 @@ impl<'a> VM<'a> {
             open_upvalues: LinkedList::new(UpvalueListAdapter::new()),
             globals: HashMap::new(),
             stdout,
+            bytes_allocated: 0,
+            next_gc: 1024 * 1024,
         };
 
         let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
@@ -380,20 +387,17 @@ impl<'a> VM<'a> {
         // Note that the set variable doesn't pop the value from the stack because the set assignment
         // is an expression statement and there always is a pop instruction after expression statement.
         let val = self.peek_stack(StackPosition::RevOffset(0)).clone();
-
-        // It's a bit wasteful to clone the constant name everytime it's assigned, but I want to
-        // avoid unsafe code in this before profiling.
         let name = match self
             .current_frame()
             .function()
             .chunk
             .get_constant(constant.0 as usize)
         {
-            Some(ConstantValue::Str(name)) => name.clone(),
+            Some(ConstantValue::Str(name)) => name,
             _ => panic!("Unreachable"),
         };
 
-        match self.globals.get_mut(&name) {
+        match self.globals.get_mut(name) {
             Some(entry) => {
                 *entry = val;
                 Ok(())
@@ -755,9 +759,101 @@ impl<'a> VM<'a> {
         self.allocate_object(obj);
     }
 
-    // This is where the GC will make the decision on doing GC
+    // This is where the GC will make the decision on doing GC which means be careful using this
+    // method (i.e ensure the object being passed to here is already reachable from stack).
+    // TODO: Stress GC if feature is enabled (and also logging GC)
     fn allocate_object(&mut self, val: Rc<Object>) {
+        self.bytes_allocated += std::mem::size_of_val(&val.value);
+
+        // Check if Gc should start mark-sweep
+        if self.bytes_allocated > self.next_gc {
+            self.mark();
+            self.sweep();
+
+            self.next_gc = self.bytes_allocated * GC_HEAP_GROW_FACTOR;
+        }
+
         self.objects.push_front(val);
+    }
+
+    // In the text book, the marking phase is separated into two parts -
+    // - Marking the roots where those reachable from the stack, global table, open upvalues,
+    //   and call-frames are marked. During this, if any references are found, they are pushed onto
+    //   gray list which are processed again in the second phase.
+    // - Tracing reference phase where the objects from gray list are walked recursively and mark
+    //   every objects it found.
+    // I've combined both phase into one mark phase by following the references along. Essentially,
+    // I'm using DFS while the textbook uses BFS and it shouldn't really affect the runtime.
+    fn mark(&mut self) {
+        // Mark the objects from the stack recursively
+        for val in &self.stack {
+            if let StackValue::Obj(obj) = val {
+                Self::mark_object(obj);
+            }
+        }
+
+        // Mark the global table
+        for val in self.globals.values() {
+            if let StackValue::Obj(obj) = val {
+                Self::mark_object(obj);
+            }
+        }
+
+        // Walk through the call frames
+        for frame in &self.frames {
+            Self::mark_object(&frame.fun);
+        }
+
+        // Also walk through the open upvalue list
+        let mut cursor = self.open_upvalues.cursor();
+        cursor.move_next();
+
+        while let Some(obj) = cursor.get() {
+            Self::mark_object(obj);
+            cursor.move_next();
+        }
+    }
+
+    fn mark_object(obj: &Object) {
+        if obj.marked.get() {
+            return;
+        }
+
+        // Mark the given object itself
+        obj.marked.replace(true);
+
+        match &obj.value {
+            // Mark all the captured values if it's a closure
+            HeapValue::Closure(closure) => {
+                for captured in &closure.captured {
+                    Self::mark_object(captured);
+                }
+            }
+
+            // If it's a closed upvalue and that closed value is pointing to another object,
+            // mark them recursively too. I don't have to mark open value because they would have
+            // been marked while walking through the stack
+            HeapValue::Upvalue(val) => {
+                if let UpvalueState::Closed(StackValue::Obj(upvalue)) = &*val.borrow() {
+                    Self::mark_object(upvalue);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn sweep(&mut self) {
+        let mut cursor = self.objects.cursor_mut();
+        cursor.move_next();
+        while let Some(obj) = cursor.get() {
+            let marked = obj.marked.replace(false);
+            if !marked {
+                self.bytes_allocated -= std::mem::size_of_val(&obj.value);
+                cursor.remove();
+            } else {
+                cursor.move_next();
+            }
+        }
     }
 
     fn current_frame(&self) -> &CallFrame {

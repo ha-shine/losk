@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -68,6 +68,7 @@ pub(super) struct Object {
     pub(super) heap_link: LinkedListLink,
     pub(super) upvalue_link: LinkedListLink,
     pub(super) value: HeapValue,
+    pub(super) marked: Cell<bool>,
 }
 
 impl PartialEq for Object {
@@ -85,6 +86,7 @@ impl Object {
             heap_link: LinkedListLink::new(),
             upvalue_link: LinkedListLink::new(),
             value: val,
+            marked: Cell::new(false),
         })
     }
 }
