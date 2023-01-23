@@ -71,9 +71,9 @@ impl<'a> VM<'a> {
         };
 
         let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
-        vm.objects.push_front(clock.clone());
         vm.globals
-            .insert("clock".to_string(), StackValue::Obj(clock));
+            .insert("clock".to_string(), StackValue::Obj(clock.clone()));
+        vm.allocate_object(clock);
         vm
     }
 
@@ -131,11 +131,16 @@ impl<'a> VM<'a> {
     pub fn run(&mut self, main: Function) -> VmResult<()> {
         let leaked = Box::leak(Box::new(main));
         let main_closure = self.make_closure(leaked);
-        let main = Object::new(HeapValue::closure(main_closure));
-        self.objects.push_front(main.clone());
-        self.stack.push(StackValue::Obj(main.clone()));
+        self.allocate_and_push(HeapValue::Closure(main_closure));
+
+        let fun = if let StackValue::Obj(obj) = self.peek_stack(StackPosition::RevOffset(0)) {
+            obj.clone()
+        } else {
+            panic!("Unreachable");
+        };
+
         self.frames.push(CallFrame {
-            fun: main,
+            fun,
             ip: 0,
             slots: 0,
         });
@@ -588,12 +593,13 @@ impl<'a> VM<'a> {
 
         // The loop will return an Rc of object that should be inserted into the upvalues.
         // It will also ensure the cursor is always pointing to a position right next to where the
-        // object go so that the object should use the cursor's `insert_before`. A second value
-        // indicates whether the object is a newly created one, and if so it should be allocated
-        // on the heap.
+        // object go so that the object should use the cursor's `insert_before`. This object will
+        // not be linked yet if it's a new object and I can just check this link status to ensure
+        // the object is pushed on to the heap.
+        //
         // This is because of the restriction with Rust where `self` can't be borrowed twice,
         // once with the cursor and again in allocate_object.
-        let (obj, is_new) = loop {
+        let obj = loop {
             // Because of more rust (and intrusive pointer) restrictions, I have to extract
             // the value of comparison out of this and do the cursor processing after this. Here,
             // `get` is borrowed immutably, but I need to remove the node (or move to the next)
@@ -612,10 +618,7 @@ impl<'a> VM<'a> {
                 // If current is null, that means it's the end of the list. Create a new node and add
                 // it to the list
                 None => {
-                    break (
-                        Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos)))),
-                        true,
-                    );
+                    break Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos))));
                 }
 
                 // This is a cursor for open upvalues, so it's definitely a panic to see anything
@@ -630,10 +633,7 @@ impl<'a> VM<'a> {
                 // the previous place. The open upvalue objects are sorted based on their
                 // stack position, from topmost value to bottommost.
                 Ordering::Less => {
-                    break (
-                        Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos)))),
-                        true,
-                    );
+                    break Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos))));
                 }
 
                 // Unfortunately, due to the limitation of intrusive linked list, I can't seem
@@ -643,7 +643,7 @@ impl<'a> VM<'a> {
                 Ordering::Equal => {
                     // Now cursor is pointing to the one after this
                     let removed = cursor.remove().unwrap();
-                    break (removed, false);
+                    break removed;
                 }
 
                 Ordering::Greater => {
@@ -653,8 +653,8 @@ impl<'a> VM<'a> {
         };
 
         cursor.insert_before(obj.clone());
-        if is_new {
-            self.objects.push_front(obj.clone());
+        if !obj.heap_link.is_linked() {
+            self.allocate_object(obj.clone());
         }
 
         obj
@@ -748,15 +748,16 @@ impl<'a> VM<'a> {
     }
 
     fn allocate_and_push(&mut self, val: HeapValue) {
-        let hval = self.allocate_object(val);
-        let sval = StackValue::Obj(hval);
+        let obj = Object::new(val);
+        let sval = StackValue::Obj(obj.clone());
         self.stack.push(sval);
+
+        self.allocate_object(obj);
     }
 
-    fn allocate_object(&mut self, val: HeapValue) -> Rc<Object> {
-        let value = Object::new(val);
-        self.objects.push_front(value.clone());
-        value
+    // This is where the GC will make the decision on doing GC
+    fn allocate_object(&mut self, val: Rc<Object>) {
+        self.objects.push_front(val);
     }
 
     fn current_frame(&self) -> &CallFrame {
