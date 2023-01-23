@@ -79,7 +79,9 @@ impl<'a> VM<'a> {
             next_gc: 1024 * 1024,
         };
 
-        let clock = Object::new(HeapValue::native(NativeFunction::new("clock", 0, clock)));
+        let clock = Object::new(HeapValue::NativeFunction(NativeFunction::new(
+            "clock", 0, clock,
+        )));
         vm.globals
             .insert("clock".to_string(), StackValue::Obj(clock.clone()));
         vm.allocate_object(clock);
@@ -507,7 +509,7 @@ impl<'a> VM<'a> {
         match constant {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
-            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::str(val.clone())),
+            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::Str(val.clone())),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => panic!("Unreachable"),
         }
@@ -633,7 +635,7 @@ impl<'a> VM<'a> {
         match ConstantValue::from(value) {
             ConstantValue::Double(val) => self.push(StackValue::Num(val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
-            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::str(val)),
+            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::Str(val)),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => {
                 return Err(self.error(format_args!("Invalid return value from native function")))

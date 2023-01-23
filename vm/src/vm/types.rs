@@ -73,20 +73,6 @@ impl Display for HeapValue {
     }
 }
 
-impl HeapValue {
-    pub(super) fn str(str: String) -> HeapValue {
-        HeapValue::Str(str)
-    }
-
-    pub(super) fn closure(closure: Closure) -> HeapValue {
-        HeapValue::Closure(closure)
-    }
-
-    pub(super) fn native(fun: NativeFunction) -> HeapValue {
-        HeapValue::NativeFunction(fun)
-    }
-}
-
 #[derive(Debug)]
 pub(super) struct Object {
     pub(super) heap_link: LinkedListLink,
