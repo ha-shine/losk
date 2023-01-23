@@ -118,7 +118,7 @@ impl Compiler {
             Type::LeftBrace => ParseRule::new(None, None, Precedence::None),
             Type::RightBrace => ParseRule::new(None, None, Precedence::None),
             Type::Comma => ParseRule::new(None, None, Precedence::None),
-            Type::Dot => ParseRule::new(None, None, Precedence::None),
+            Type::Dot => ParseRule::new(None, Some(Self::dot), Precedence::Call),
             Type::Minus => ParseRule::new(Some(Self::unary), Some(Self::binary), Precedence::Term),
             Type::Plus => ParseRule::new(None, Some(Self::binary), Precedence::Term),
             Type::SemiColon => ParseRule::new(None, None, Precedence::None),
@@ -588,6 +588,20 @@ impl Compiler {
         Ok(())
     }
 
+    fn dot(&self, ctx: &mut Context, can_assign: bool) -> CompilationResult<()> {
+        ctx.consume(Type::Identifier, "Expect property name after '.'.")?;
+        let name = ctx.prev.as_ref().unwrap().lexeme.clone();
+        let name_constant = ctx.identifier_constant(name)?;
+
+        if can_assign && ctx.match_type(Type::Equal) {
+            self.expression(ctx)?;
+            ctx.add_instruction(Instruction::SetProperty(name_constant));
+        } else {
+            ctx.add_instruction(Instruction::GetProperty(name_constant));
+        }
+        Ok(())
+    }
+
     // When this is called, the left-hand side expression has already been compiled. If that value
     // is false, leave that value on the stack and skip the whole expression. If not, pop that
     // value from the stack and evaluate the next expression.
@@ -722,7 +736,7 @@ impl Compiler {
         while precedence as usize <= Self::rule(ctx.curr.as_ref().unwrap().ty).precedence as usize {
             ctx.advance();
             let rule = Self::rule(ctx.prev.as_ref().unwrap().ty);
-            (rule.infix.unwrap())(self, ctx, false)?;
+            (rule.infix.unwrap())(self, ctx, can_assign)?;
         }
 
         if can_assign && ctx.match_type(Type::Equal) {

@@ -21,6 +21,8 @@ pub(crate) enum Instruction {
     SetLocal(StackPosition),
     GetUpvalue(UpvalueIndex),
     SetUpvalue(UpvalueIndex),
+    SetProperty(Constant),
+    GetProperty(Constant),
     Equal,
     Greater,
     Less,

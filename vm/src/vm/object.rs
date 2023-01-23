@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::rc::{Rc, Weak};
@@ -167,39 +168,30 @@ impl Class {
 pub(super) struct Instance {
     pub(super) class: Rc<Object>,
 
-    // Using weak objects here because it will be very easy to create cycles if strong pointers
-    // are used here.
-    pub(super) fields: HashMap<String, Weak<Object>>,
+    // RefCell is required here because I need to set the properties
+    pub(super) fields: RefCell<HashMap<String, StackValue>>,
 }
 
 impl Instance {
     pub(super) fn new(class: Rc<Object>) -> Instance {
         Instance {
             class,
-            fields: HashMap::new(),
+            fields: RefCell::new(HashMap::new()),
         }
     }
 }
 
 impl PartialEq for Instance {
     fn eq(&self, other: &Self) -> bool {
-        if self.class != other.class || self.fields.len() != other.fields.len() {
+        if self.class != other.class || self.fields.borrow().len() != other.fields.borrow().len() {
             return false;
         }
 
-        for (k, v) in &self.fields {
-            let obj = v.upgrade().unwrap();
-            match other.fields.get(k) {
-                Some(val) => {
-                    let other = val.upgrade().unwrap();
-                    if obj != other {
-                        return false;
-                    }
-                }
-                None => {
-                    return false;
-                }
-            }
+        for (k, v) in self.fields.borrow().iter() {
+            match other.fields.borrow().get(k) {
+                Some(val) if v == val => { /* Values are equal, continue */ }
+                _ => return false,
+            };
         }
 
         true

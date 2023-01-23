@@ -179,6 +179,7 @@ impl<'a> VM<'a> {
                 Instruction::Pop => {
                     self.pop();
                 }
+
                 Instruction::GetGlobal(Constant(index)) => {
                     let name = match self
                         .current_frame()
@@ -197,6 +198,7 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+
                 Instruction::DefineGlobal(Constant(index)) => {
                     // The global name is stored as a constant value in the constant pool, read
                     // from the pool to get the name.
@@ -213,6 +215,7 @@ impl<'a> VM<'a> {
                     let val = self.pop();
                     self.globals.insert(name.clone(), val);
                 }
+
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
 
                 Instruction::GetLocal(pos) => {
@@ -234,6 +237,7 @@ impl<'a> VM<'a> {
                         panic!("Unreachable")
                     }
                 }
+
                 Instruction::SetUpvalue(UpvalueIndex(index)) => {
                     let top = self.peek_stack(StackPosition::RevOffset(0)).clone();
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
@@ -242,6 +246,72 @@ impl<'a> VM<'a> {
                         panic!("Unreachable")
                     }
                 }
+
+                Instruction::GetProperty(Constant(index)) => {
+                    let obj = match self.peek_stack(StackPosition::RevOffset(0)) {
+                        StackValue::Obj(obj) => obj,
+                        _ => return Err(self.error(format_args!("Only instances have properties"))),
+                    };
+
+                    let instance = match &obj.value {
+                        HeapValue::Instance(instance) => instance,
+                        _ => return Err(self.error(format_args!("Only instances have properties"))),
+                    };
+
+                    let field = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(index as usize)
+                        .unwrap()
+                    {
+                        ConstantValue::Str(name) => name,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let val = match instance.fields.borrow().get(field) {
+                        Some(val) => val.clone(),
+                        None => {
+                            return Err(self.error(format_args!("Undefined property '{}'.", field)))
+                        }
+                    };
+
+                    self.pop();
+                    self.push(val);
+                }
+
+                Instruction::SetProperty(Constant(index)) => {
+                    let value_slot = self.pop();
+                    let instance_slot = self.pop();
+
+                    let obj = match instance_slot {
+                        StackValue::Obj(obj) => obj,
+                        _ => return Err(self.error(format_args!("Only instances have properties"))),
+                    };
+
+                    let instance = match &obj.value {
+                        HeapValue::Instance(instance) => instance,
+                        _ => return Err(self.error(format_args!("Only instances have properties"))),
+                    };
+
+                    let field = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(index as usize)
+                        .unwrap()
+                    {
+                        ConstantValue::Str(name) => name.clone(),
+                        _ => panic!("Unreachable"),
+                    };
+
+                    instance
+                        .fields
+                        .borrow_mut()
+                        .insert(field, value_slot.clone());
+                    self.push(value_slot);
+                }
+
                 Instruction::Equal => {
                     let rhs = self.pop();
                     let lhs = self.pop();
@@ -842,8 +912,10 @@ impl<'a> VM<'a> {
             HeapValue::Instance(ins) => {
                 Self::mark_object(&ins.class);
 
-                for field in ins.fields.values() {
-                    Self::mark_object(&field.upgrade().unwrap());
+                for field in ins.fields.borrow().values() {
+                    if let StackValue::Obj(obj) = field {
+                        Self::mark_object(obj);
+                    }
                 }
             }
 
