@@ -1052,6 +1052,10 @@ mod tests {
                 include_str!("../../../data/captured_closure.lox"),
                 include_str!("../../../data/captured_closure.lox.expected"),
             ),
+            (
+                include_str!("../../../data/class_set_property.lox"),
+                include_str!("../../../data/class_set_property.lox.expected"),
+            ),
         ];
 
         for (src, expected) in tests {

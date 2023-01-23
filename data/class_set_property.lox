@@ -1,0 +1,10 @@
+class Person {}
+
+var personA = Person();
+var personB = Person();
+personA.other = personB;
+personB.name = "Shine";
+
+print Person;
+print personA;
+print "Hello, " + personA.other.name;
