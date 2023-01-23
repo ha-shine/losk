@@ -245,6 +245,8 @@ impl Compiler {
             self.var_declaration(ctx)
         } else if ctx.match_type(Type::Fun) {
             self.fun_declaration(ctx)
+        } else if ctx.match_type(Type::Class) {
+            self.class_declaration(ctx)
         } else {
             self.statement(ctx)
         }
@@ -269,6 +271,19 @@ impl Compiler {
         ctx.mark_initialized();
         self.function(ctx, FunctionType::Function)?;
         ctx.define_variable(global, ctx.prev.as_ref().unwrap().line);
+        Ok(())
+    }
+
+    fn class_declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
+        let line = ctx.consume(Type::Identifier, "Expect class name.")?;
+        let name = ctx.prev.as_ref().unwrap().lexeme.clone();
+        let name_constant = ctx.identifier_constant(name)?;
+        self.declare_variable(ctx)?;
+
+        ctx.add_instruction(Instruction::Class(name_constant));
+        ctx.define_variable(name_constant, line);
+        ctx.consume(Type::LeftBrace, "Expect '{' before class body.")?;
+        ctx.consume(Type::RightBrace, "Expect '}' after class body.")?;
         Ok(())
     }
 

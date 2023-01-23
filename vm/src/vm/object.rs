@@ -1,5 +1,6 @@
+use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
 use crate::limits::UPVALUE_LIMIT;
@@ -149,4 +150,58 @@ impl PartialEq for Closure {
 pub(super) enum UpvalueState {
     Open(StackPosition),
     Closed(StackValue),
+}
+
+#[derive(Debug, PartialEq)]
+pub(super) struct Class {
+    pub(super) name: String,
+}
+
+impl Class {
+    pub(super) fn new(name: String) -> Class {
+        Class { name }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Instance {
+    pub(super) class: Rc<Object>,
+
+    // Using weak objects here because it will be very easy to create cycles if strong pointers
+    // are used here.
+    pub(super) fields: HashMap<String, Weak<Object>>,
+}
+
+impl Instance {
+    pub(super) fn new(class: Rc<Object>) -> Instance {
+        Instance {
+            class,
+            fields: HashMap::new(),
+        }
+    }
+}
+
+impl PartialEq for Instance {
+    fn eq(&self, other: &Self) -> bool {
+        if self.class != other.class || self.fields.len() != other.fields.len() {
+            return false;
+        }
+
+        for (k, v) in &self.fields {
+            let obj = v.upgrade().unwrap();
+            match other.fields.get(k) {
+                Some(val) => {
+                    let other = val.upgrade().unwrap();
+                    if obj != other {
+                        return false;
+                    }
+                }
+                None => {
+                    return false;
+                }
+            }
+        }
+
+        true
+    }
 }

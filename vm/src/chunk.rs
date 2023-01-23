@@ -38,6 +38,7 @@ pub(crate) enum Instruction {
     Closure(Constant),
     CloseUpvalue,
     Return,
+    Class(Constant),
 }
 
 // The position of a value on the stack represented in different ways -

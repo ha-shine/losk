@@ -1,12 +1,12 @@
 use std::cell::{Cell, RefCell};
 use std::fmt;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 use crate::chunk::Instruction;
-use crate::object::{Closure, NativeFunction, UpvalueState};
+use crate::object::{Class, Closure, Instance, NativeFunction, UpvalueState};
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
@@ -46,7 +46,31 @@ pub(super) enum HeapValue {
     // Several reasons why a interior mutability is needed here. The set_upvalue instruction
     // mutate the value this holds with whatever value is currently on top of the stack. And
     // when closed, the value needs to be updated with captured upvalue.
+    // This could be replaced with a Cell if I start using pointers in StackValue and make them
+    // Copy.
     Upvalue(RefCell<UpvalueState>),
+
+    Class(Class),
+    Instance(Instance),
+}
+
+impl Display for HeapValue {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            HeapValue::Str(val) => write!(f, "{}", val),
+            HeapValue::Closure(val) => write!(f, "<Function {}>", val.fun.name),
+            HeapValue::NativeFunction(val) => write!(f, "<NativeFunction {}>", val.name),
+            HeapValue::Class(cls) => write!(f, "<Class {}>", cls.name),
+            HeapValue::Instance(ins) => {
+                if let HeapValue::Class(cls) = &ins.class.value {
+                    write!(f, "<Instance {}>", cls.name)
+                } else {
+                    panic!()
+                }
+            }
+            HeapValue::Upvalue(_) => panic!("Upvalues should not surface to users"),
+        }
+    }
 }
 
 impl HeapValue {

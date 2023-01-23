@@ -11,7 +11,9 @@ use native::clock;
 
 use crate::chunk::*;
 use crate::limits::GC_HEAP_GROW_FACTOR;
-use crate::object::{Closure, Function, NativeFunction, NativeValue, UpvalueState};
+use crate::object::{
+    Class, Closure, Function, Instance, NativeFunction, NativeValue, UpvalueState,
+};
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
@@ -320,7 +322,11 @@ impl<'a> VM<'a> {
                                     self.store_native_value(result)?;
                                 }
                             }
-                            _ => {
+                            HeapValue::Class(_) => {
+                                let instance = Instance::new(obj.clone());
+                                self.allocate_and_push(HeapValue::Instance(instance));
+                            }
+                            HeapValue::Str(_) | HeapValue::Upvalue(_) | HeapValue::Instance(_) => {
                                 return Err(
                                     self.error(format_args!("Can only call functions and classes"))
                                 )
@@ -378,6 +384,20 @@ impl<'a> VM<'a> {
                     // To get back there, I need to pop stack.len() - slots.
                     self.pop_n(self.stack.len() - slots);
                     self.push(result);
+                }
+                Instruction::Class(Constant(idx)) => {
+                    let name = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(idx as usize)
+                    {
+                        Some(ConstantValue::Str(name)) => name,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let cls = Class::new(name.clone());
+                    self.allocate_and_push(HeapValue::Class(cls));
                 }
             }
         }
@@ -561,31 +581,11 @@ impl<'a> VM<'a> {
             StackValue::Bool(val) => {
                 writeln!(self.stdout, "{}", val).unwrap();
             }
-            StackValue::Obj(object) => self.print_heap_value(&object.value),
+            StackValue::Obj(object) => {
+                writeln!(self.stdout, "{}", object.value).unwrap();
+            }
             StackValue::Nil => {
                 writeln!(self.stdout, "nil").unwrap();
-            }
-        };
-    }
-
-    fn print_heap_value(&mut self, val: &HeapValue) {
-        match val {
-            HeapValue::Str(val) => {
-                writeln!(self.stdout, "{}", val).unwrap();
-            }
-            HeapValue::Closure(val) => {
-                writeln!(self.stdout, "<Function {}>", val.fun.name).unwrap();
-            }
-            HeapValue::NativeFunction(val) => {
-                writeln!(self.stdout, "<NativeFunction {}>", val.name).unwrap();
-            }
-            HeapValue::Upvalue(val) => {
-                match &*val.borrow() {
-                    UpvalueState::Open(pos) => {
-                        self.print_stack_value(self.peek_stack(*pos).clone())
-                    }
-                    UpvalueState::Closed(val) => self.print_stack_value(val.clone()),
-                };
             }
         };
     }
@@ -838,7 +838,17 @@ impl<'a> VM<'a> {
                     Self::mark_object(upvalue);
                 }
             }
-            _ => {}
+
+            HeapValue::Instance(ins) => {
+                Self::mark_object(&ins.class);
+
+                for field in ins.fields.values() {
+                    Self::mark_object(&field.upgrade().unwrap());
+                }
+            }
+
+            // These don't need recursion, they contains no fields
+            HeapValue::Str(_) | HeapValue::NativeFunction(_) | HeapValue::Class(_) => {}
         }
     }
 
@@ -964,10 +974,10 @@ mod tests {
                 include_str!("../../../data/capture_inner_variable.lox"),
                 include_str!("../../../data/capture_inner_variable.lox.expected"),
             ),
-            // (
-            //     include_str!("../../../data/captured_closure.lox"),
-            //     include_str!("../../../data/captured_closure.lox.expected"),
-            // ),
+            (
+                include_str!("../../../data/captured_closure.lox"),
+                include_str!("../../../data/captured_closure.lox.expected"),
+            ),
         ];
 
         for (src, expected) in tests {
