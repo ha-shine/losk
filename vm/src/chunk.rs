@@ -44,6 +44,7 @@ pub(crate) enum Instruction {
     Class(Constant),
     Method(Constant),
     Invoke(Invoke),
+    SuperInvoke(Invoke),
     Inherit,
 }
 

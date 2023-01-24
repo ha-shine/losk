@@ -518,19 +518,42 @@ impl<'a> VM<'a> {
                         _ => return Err(self.error(format_args!("Only instances have methods."))),
                     };
 
-                    let methods = instance.class().methods.borrow();
-                    match methods.get(name).cloned() {
-                        Some(method) => self.execute_call(method, args)?,
-                        None => match instance.fields.borrow().get(name).cloned() {
-                            Some(field) => {
-                                self.put_stack(StackPosition::RevOffset(args), field.clone());
-                                self.execute_call(field, args)?
-                            }
-                            None => {
-                                return Err(self.error(format_args!("Undefined property {}.", name)))
-                            }
-                        },
-                    }
+                    self.invoke_from_class(instance.class(), instance, name, args)?;
+                }
+
+                Instruction::SuperInvoke(Invoke { name, args }) => {
+                    let name = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(name.0 as usize)
+                    {
+                        Some(ConstantValue::Str(name)) => name,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let superclass_slot = self.pop();
+                    let superclass_obj = match superclass_slot {
+                        StackValue::Obj(obj) => obj,
+                        _ => panic!("Unreachable"),
+                    };
+                    let superclass = match &superclass_obj.value {
+                        HeapValue::Class(class) => class,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let args = args.0;
+                    let receiver = self.peek_stack(StackPosition::RevOffset(args)).clone();
+                    let instance_obj = match receiver {
+                        StackValue::Obj(obj) => obj,
+                        _ => return Err(self.error(format_args!("Only instances have methods."))),
+                    };
+                    let instance = match &instance_obj.value {
+                        HeapValue::Instance(instance) => instance,
+                        _ => return Err(self.error(format_args!("Only instances have methods."))),
+                    };
+
+                    self.invoke_from_class(superclass, instance, name, args)?;
                 }
 
                 Instruction::Inherit => {
@@ -697,6 +720,28 @@ impl<'a> VM<'a> {
             ip: 0,
             slots: self.stack.len() - args - 1,
         });
+        Ok(())
+    }
+
+    fn invoke_from_class(
+        &mut self,
+        class: &Class,
+        instance: &Instance,
+        name: &str,
+        args: usize,
+    ) -> VmResult<()> {
+        let methods = class.methods.borrow();
+        match methods.get(name).cloned() {
+            Some(method) => self.execute_call(method, args)?,
+            None => match instance.fields.borrow().get(name).cloned() {
+                Some(field) => {
+                    self.put_stack(StackPosition::RevOffset(args), field.clone());
+                    self.execute_call(field, args)?;
+                }
+                None => return Err(self.error(format_args!("Undefined property {}.", name))),
+            },
+        }
+
         Ok(())
     }
 

@@ -770,8 +770,18 @@ impl Compiler {
         // To access superclass' method, runtime needs access to both the receiver (`this`),
         // and the superclass of the surrounding method's class.
         self.named_variable(ctx, false, "this".to_string(), line)?;
-        self.named_variable(ctx, false, "super".to_string(), line)?;
-        ctx.add_instruction(Instruction::GetSuper(name_constant));
+
+        if ctx.match_type(Type::LeftParen) {
+            let args = self.argument_list(ctx)?;
+            self.named_variable(ctx, false, "super".to_string(), line)?;
+            ctx.add_instruction(Instruction::SuperInvoke(Invoke {
+                name: name_constant,
+                args,
+            }));
+        } else {
+            self.named_variable(ctx, false, "super".to_string(), line)?;
+            ctx.add_instruction(Instruction::GetSuper(name_constant));
+        }
         Ok(())
     }
 
