@@ -1,4 +1,4 @@
-use phf::{Map, phf_map};
+use phf::{phf_map, Map};
 
 use crate::error::Error;
 use crate::token::{Literal, Token, Type};
@@ -222,7 +222,7 @@ impl<'a> TokenStream<'a> {
     }
 
     fn identifier(&mut self) -> Result<Token, Error> {
-        while self.peek().is_alphanumeric() {
+        while self.peek().is_alphanumeric() || self.peek() == '_' {
             self.advance();
         }
 
