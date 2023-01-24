@@ -6,7 +6,7 @@ use std::rc::Rc;
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 use crate::chunk::Instruction;
-use crate::object::{Class, Closure, Instance, NativeFunction, UpvalueState};
+use crate::object::{BoundMethod, Class, Closure, Instance, NativeFunction, UpvalueState};
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
@@ -52,6 +52,7 @@ pub(super) enum HeapValue {
 
     Class(Class),
     Instance(Instance),
+    BoundMethod(BoundMethod),
 }
 
 impl Display for HeapValue {
@@ -68,6 +69,7 @@ impl Display for HeapValue {
                     panic!()
                 }
             }
+            HeapValue::BoundMethod(method) => write!(f, "{}", method.method.value),
             HeapValue::Upvalue(_) => panic!("Upvalues should not surface to users"),
         }
     }
@@ -123,6 +125,7 @@ impl CallFrame {
     pub(super) fn function(&self) -> &'static Function {
         match &self.fun.value {
             HeapValue::Closure(closure) => closure.fun,
+            HeapValue::BoundMethod(method) => method.closure().fun,
             _ => panic!("Unreachable"),
         }
     }

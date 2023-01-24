@@ -6,7 +6,7 @@ use std::rc::Rc;
 use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
 use crate::limits::UPVALUE_LIMIT;
 use crate::value::ConstantValue;
-use crate::vm::types::Object;
+use crate::vm::types::{HeapValue, Object};
 use crate::vm::StackValue;
 
 pub(super) type NativeFn = fn(&[StackValue]) -> Option<NativeValue>;
@@ -156,11 +156,15 @@ pub(super) enum UpvalueState {
 #[derive(Debug, PartialEq)]
 pub(super) struct Class {
     pub(super) name: String,
+    pub(super) methods: RefCell<HashMap<String, StackValue>>,
 }
 
 impl Class {
     pub(super) fn new(name: String) -> Class {
-        Class { name }
+        Class {
+            name,
+            methods: RefCell::new(HashMap::new()),
+        }
     }
 }
 
@@ -195,5 +199,36 @@ impl PartialEq for Instance {
         }
 
         true
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub(super) struct BoundMethod {
+    pub(super) receiver: StackValue,
+    pub(super) method: Rc<Object>,
+}
+
+impl BoundMethod {
+    pub(super) fn new(receiver: StackValue, method: Rc<Object>) -> Self {
+        BoundMethod { receiver, method }
+    }
+
+    pub(super) fn instance(&self) -> &Instance {
+        let obj = match &self.receiver {
+            StackValue::Obj(obj) => obj,
+            _ => panic!("Unreachable"),
+        };
+
+        match &obj.value {
+            HeapValue::Instance(instance) => instance,
+            _ => panic!("Unreachable"),
+        }
+    }
+
+    pub(super) fn closure(&self) -> &Closure {
+        match &self.method.value {
+            HeapValue::Closure(closure) => closure,
+            _ => panic!("Unreachable"),
+        }
     }
 }

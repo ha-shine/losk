@@ -54,6 +54,7 @@ impl Precedence {
 enum FunctionType {
     Script,
     Function,
+    Method,
 }
 
 struct Local {
@@ -148,7 +149,7 @@ impl Compiler {
             Type::Print => ParseRule::new(None, None, Precedence::None),
             Type::Return => ParseRule::new(None, None, Precedence::None),
             Type::Super => ParseRule::new(None, None, Precedence::None),
-            Type::This => ParseRule::new(None, None, Precedence::None),
+            Type::This => ParseRule::new(Some(Self::this), None, Precedence::None),
             Type::Var => ParseRule::new(None, None, Precedence::None),
             Type::While => ParseRule::new(None, None, Precedence::None),
             Type::Eof => ParseRule::new(None, None, Precedence::None),
@@ -174,25 +175,33 @@ impl Compiler {
     fn compile_context(&self, ctx: &mut Context) {
         // A dummy local value needs to be added for special local zero slot that will be used for
         // the closure
-        ctx.add_local(String::new(), Some(0)).unwrap();
+        match ctx.ftype {
+            FunctionType::Method => ctx.add_local("this".to_string(), Some(0)).unwrap(),
+            FunctionType::Function | FunctionType::Script => {
+                ctx.add_local(String::new(), Some(0)).unwrap()
+            }
+        };
 
         // If this is a function, the compiler doesn't need to parse until EOF. It's enough to
         // parse just the function name, parameters, and the body
         //
         // The return functions are always emitted whether the parsed function does return or
         // not. They will not be interpreted if the function return earlier anyway.
-        if let FunctionType::Function = ctx.ftype {
-            match self.compile_function(ctx) {
-                Ok(_) => ctx.add_return(),
-                Err(err) => {
-                    ctx.errs.push(err);
+        match ctx.ftype {
+            FunctionType::Function | FunctionType::Method => {
+                match self.compile_function(ctx) {
+                    Ok(_) => ctx.add_return(),
+                    Err(err) => {
+                        ctx.errs.push(err);
 
-                    // The synchronize here should be synchronized until the end of the block?
-                    self.synchronize(ctx);
+                        // The synchronize here should be synchronized until the end of the block?
+                        self.synchronize(ctx);
+                    }
                 }
-            }
 
-            return;
+                return;
+            }
+            FunctionType::Script => { /* continue */ }
         }
 
         // Only advance to next character if the function being parsed is a script because
@@ -277,13 +286,21 @@ impl Compiler {
     fn class_declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
         let line = ctx.consume(Type::Identifier, "Expect class name.")?;
         let name = ctx.prev.as_ref().unwrap().lexeme.clone();
-        let name_constant = ctx.identifier_constant(name)?;
+        let name_constant = ctx.identifier_constant(name.clone())?;
         self.declare_variable(ctx)?;
 
         ctx.add_instruction(Instruction::Class(name_constant));
         ctx.define_variable(name_constant, line);
+        self.named_variable(ctx, false, name, line)?;
         ctx.consume(Type::LeftBrace, "Expect '{' before class body.")?;
+        while !ctx.check(Type::RightBrace) && !ctx.check(Type::Eof) {
+            self.method(ctx)?;
+        }
         ctx.consume(Type::RightBrace, "Expect '}' after class body.")?;
+
+        // After building all the methods, the class variable is still on top of the stack and it
+        // needs to be popped.
+        ctx.add_instruction(Instruction::Pop);
         Ok(())
     }
 
@@ -498,6 +515,16 @@ impl Compiler {
         }
     }
 
+    fn method(&self, ctx: &mut Context) -> CompilationResult<()> {
+        ctx.consume(Type::Identifier, "Expect method name.")?;
+        let name = ctx.prev.as_ref().unwrap().lexeme.clone();
+        let name_constant = ctx.identifier_constant(name)?;
+
+        self.function(ctx, FunctionType::Method)?;
+        ctx.add_instruction(Instruction::Method(name_constant));
+        Ok(())
+    }
+
     fn grouping(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         self.expression(ctx)?;
         ctx.consume(Type::RightParen, "Expect ')' after expression.")?;
@@ -662,14 +689,23 @@ impl Compiler {
     }
 
     fn variable(&self, ctx: &mut Context, can_assign: bool) -> CompilationResult<()> {
-        self.named_variable(ctx, can_assign)
-    }
-
-    fn named_variable(&self, ctx: &mut Context, can_assign: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
-
         let name = prev.lexeme.clone();
         let line = prev.line;
+        self.named_variable(ctx, can_assign, name, line)
+    }
+
+    fn this(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
+        self.variable(ctx, false)
+    }
+
+    fn named_variable(
+        &self,
+        ctx: &mut Context,
+        can_assign: bool,
+        name: String,
+        line: usize,
+    ) -> CompilationResult<()> {
         let (set_op, get_op) = match ctx.resolve_variable(&name) {
             Ok(LocalResolution::Global) => {
                 let constant = ctx.identifier_constant(name)?;

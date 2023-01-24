@@ -10,10 +10,8 @@ use intrusive_collections::LinkedList;
 use native::clock;
 
 use crate::chunk::*;
-use crate::limits::GC_HEAP_GROW_FACTOR;
-use crate::object::{
-    Class, Closure, Function, Instance, NativeFunction, NativeValue, UpvalueState,
-};
+use crate::limits::{GC_HEAP_GROW_FACTOR, VM_DEFAULT_STACK_SIZE, VM_MAX_CALLFRAME_COUNT};
+use crate::object::*;
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
@@ -22,9 +20,6 @@ mod error;
 pub mod native;
 pub mod object;
 mod types;
-
-const DEFAULT_STACK: usize = 256;
-const FRAMES_MAX: usize = 256;
 
 pub struct VM<'a> {
     // The stack as a growable vector. In textbook, this is represented by an array and a stack
@@ -69,9 +64,9 @@ impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write) -> Self {
         // In the
         let mut vm = VM {
-            stack: Vec::with_capacity(DEFAULT_STACK),
+            stack: Vec::with_capacity(VM_DEFAULT_STACK_SIZE),
             objects: LinkedList::new(HeapListAdapter::new()),
-            frames: Vec::with_capacity(FRAMES_MAX),
+            frames: Vec::with_capacity(VM_MAX_CALLFRAME_COUNT),
             open_upvalues: LinkedList::new(UpvalueListAdapter::new()),
             globals: HashMap::new(),
             stdout,
@@ -250,13 +245,16 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::GetProperty(Constant(index)) => {
-                    let obj = match self.peek_stack(StackPosition::RevOffset(0)) {
-                        StackValue::Obj(obj) => obj,
+                    let instance_slot = self.pop();
+
+                    let obj = match instance_slot {
+                        StackValue::Obj(ref obj) => obj,
                         _ => return Err(self.error(format_args!("Only instances have properties"))),
                     };
 
                     let instance = match &obj.value {
                         HeapValue::Instance(instance) => instance,
+                        HeapValue::BoundMethod(method) => method.instance(),
                         _ => return Err(self.error(format_args!("Only instances have properties"))),
                     };
 
@@ -271,15 +269,16 @@ impl<'a> VM<'a> {
                         _ => panic!("Unreachable"),
                     };
 
-                    let val = match instance.fields.borrow().get(field) {
-                        Some(val) => val.clone(),
+                    match instance.fields.borrow().get(field) {
+                        Some(val) => {
+                            let val = val.clone();
+                            self.push(val);
+                        }
                         None => {
-                            return Err(self.error(format_args!("Undefined property '{}'.", field)))
+                            let method = self.bind_method(instance_slot.clone(), field)?;
+                            self.allocate_and_push(HeapValue::BoundMethod(method));
                         }
                     };
-
-                    self.pop();
-                    self.push(val);
                 }
 
                 Instruction::SetProperty(Constant(index)) => {
@@ -319,6 +318,7 @@ impl<'a> VM<'a> {
                     let lhs = self.pop();
                     self.push(StackValue::Bool(lhs == rhs));
                 }
+
                 Instruction::Greater => self.execute_binary_op(Self::greater)?,
                 Instruction::Less => self.execute_binary_op(Self::less)?,
                 Instruction::Negate => self.execute_unary_op(Self::neg)?,
@@ -331,6 +331,7 @@ impl<'a> VM<'a> {
                     let val = self.pop();
                     self.print_stack_value(val);
                 }
+
                 Instruction::JumpIfFalse(JumpDist(dist)) => {
                     // The pointer has already been incremented by 1 before this match statement,
                     // so need to subtract 1 from jump distance.
@@ -347,23 +348,27 @@ impl<'a> VM<'a> {
                         }
                     }
                 }
+
                 Instruction::Jump(JumpDist(dist)) => {
                     // Same ordeal as above here.
                     self.current_frame_mut().jump(dist - 1)
                 }
+
                 Instruction::Loop(JumpDist(dist)) => {
                     // Add 1 to distance because the instruction pointer has already been incremented
                     // by 1, so it's pointing to the instruction one after this.
                     self.current_frame_mut().loop_(dist + 1)
                 }
+
                 Instruction::Call(ArgCount(count)) => {
-                    if self.frames.len() == FRAMES_MAX {
+                    if self.frames.len() == VM_MAX_CALLFRAME_COUNT {
                         return Err(self.error(format_args!("Stack overflow.")));
                     }
 
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
-                    if let StackValue::Obj(obj) = self.peek_stack(StackPosition::RevOffset(count)) {
+                    let obj = self.peek_stack(StackPosition::RevOffset(count)).clone();
+                    if let StackValue::Obj(obj) = obj {
                         match &obj.value {
                             HeapValue::Closure(closure) => {
                                 if count != closure.fun.arity {
@@ -379,6 +384,7 @@ impl<'a> VM<'a> {
                                     slots: self.stack.len() - count - 1,
                                 });
                             }
+
                             HeapValue::NativeFunction(fun) => {
                                 if count != fun.arity {
                                     return Err(self.error(format_args!(
@@ -394,10 +400,37 @@ impl<'a> VM<'a> {
                                     self.store_native_value(result)?;
                                 }
                             }
+
                             HeapValue::Class(_) => {
                                 let instance = Instance::new(obj.clone());
                                 self.allocate_and_push(HeapValue::Instance(instance));
                             }
+
+                            HeapValue::BoundMethod(method) => {
+                                let closure = method.closure();
+
+                                if count != closure.fun.arity {
+                                    return Err(self.error(format_args!(
+                                        "Expected {} arguments but got {}.",
+                                        closure.fun.arity, count
+                                    )));
+                                }
+
+                                self.frames.push(CallFrame {
+                                    fun: method.method.clone(),
+                                    ip: 0,
+                                    slots: self.stack.len() - count - 1,
+                                });
+
+                                // I need to push the receiver as the zero-slot local, instead of the
+                                // bound method itself. `this` is basically the first argument for
+                                // the method.
+                                self.put_stack(
+                                    StackPosition::RevOffset(count),
+                                    method.receiver.clone(),
+                                );
+                            }
+
                             HeapValue::Str(_) | HeapValue::Upvalue(_) | HeapValue::Instance(_) => {
                                 return Err(
                                     self.error(format_args!("Can only call functions and classes"))
@@ -457,6 +490,7 @@ impl<'a> VM<'a> {
                     self.pop_n(self.stack.len() - slots);
                     self.push(result);
                 }
+
                 Instruction::Class(Constant(idx)) => {
                     let name = match self
                         .current_frame()
@@ -470,6 +504,32 @@ impl<'a> VM<'a> {
 
                     let cls = Class::new(name.clone());
                     self.allocate_and_push(HeapValue::Class(cls));
+                }
+
+                Instruction::Method(Constant(idx)) => {
+                    let body = self.pop();
+                    let name = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(idx as usize)
+                    {
+                        Some(ConstantValue::Str(name)) => name,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let class_slot = self.peek_stack(StackPosition::RevOffset(0));
+                    let obj = match class_slot {
+                        StackValue::Obj(obj) => obj,
+                        _ => panic!("Unreachable, expecting class below closure"),
+                    };
+
+                    let class = match &obj.value {
+                        HeapValue::Class(class) => class,
+                        _ => panic!("Unreachable, expecting class below closure"),
+                    };
+
+                    class.methods.borrow_mut().insert(name.clone(), body);
                 }
             }
         }
@@ -792,6 +852,34 @@ impl<'a> VM<'a> {
         };
     }
 
+    fn bind_method(&self, instance: StackValue, name: &str) -> VmResult<BoundMethod> {
+        let instance_obj = match &instance {
+            StackValue::Obj(obj) => obj,
+            _ => panic!("Unreachable"),
+        };
+
+        let class_obj = match &instance_obj.value {
+            HeapValue::Instance(instance) => &instance.class,
+            _ => panic!("Unreachable"),
+        };
+
+        let class = match &class_obj.value {
+            HeapValue::Class(class) => class,
+            _ => panic!("Unreachable"),
+        };
+
+        let method = match class.methods.borrow().get(name) {
+            Some(method) => method.clone(),
+            None => return Err(self.error(format_args!("Undefined property '{}'.", name))),
+        };
+
+        if let StackValue::Obj(obj) = method {
+            Ok(BoundMethod::new(instance, obj))
+        } else {
+            panic!("Unreachable")
+        }
+    }
+
     fn peek_stack(&self, pos: StackPosition) -> &StackValue {
         let index = self.stack_pos_to_index(pos);
         &self.stack[index]
@@ -918,6 +1006,13 @@ impl<'a> VM<'a> {
                     if let StackValue::Obj(obj) = field {
                         Self::mark_object(obj);
                     }
+                }
+            }
+
+            HeapValue::BoundMethod(method) => {
+                Self::mark_object(&method.method);
+                if let StackValue::Obj(obj) = &method.receiver {
+                    Self::mark_object(obj);
                 }
             }
 
@@ -1055,6 +1150,10 @@ mod tests {
             (
                 include_str!("../../../data/class_set_property.lox"),
                 include_str!("../../../data/class_set_property.lox.expected"),
+            ),
+            (
+                include_str!("../../../data/nested_this.lox"),
+                include_str!("../../../data/nested_this.lox.expected"),
             ),
         ];
 
