@@ -526,16 +526,7 @@ impl<'a> VM<'a> {
     fn execute_call(&mut self, ptr: StackValue, args: usize) -> VmResult<()> {
         if let StackValue::Obj(obj) = ptr {
             match &obj.value {
-                HeapValue::Closure(closure) => {
-                    if args != closure.fun.arity {
-                        return Err(self.error(format_args!(
-                            "Expected {} arguments but got {}.",
-                            closure.fun.arity, args
-                        )));
-                    }
-
-                    self.call_closure(obj.clone(), args)
-                }
+                HeapValue::Closure(_) => self.call_closure(obj.clone(), args),
 
                 HeapValue::NativeFunction(fun) => {
                     if args != fun.arity {
@@ -578,15 +569,6 @@ impl<'a> VM<'a> {
                 }
 
                 HeapValue::BoundMethod(method) => {
-                    let closure = method.closure();
-
-                    if args != closure.fun.arity {
-                        return Err(self.error(format_args!(
-                            "Expected {} arguments but got {}.",
-                            closure.fun.arity, args
-                        )));
-                    }
-
                     // I need to push the receiver as the zero-slot local, instead of the
                     // bound method itself. `this` is basically the first argument for
                     // the method.
@@ -604,6 +586,14 @@ impl<'a> VM<'a> {
     }
 
     fn call_closure(&mut self, closure: Rc<Object>, args: usize) -> VmResult<()> {
+        if let HeapValue::Closure(closure) = &closure.value {
+            if closure.fun.arity != args {
+                return Err(self.error(format_args!("Expected 0 arguments but got {}.", args)));
+            }
+        } else {
+            return Err(self.error(format_args!("Can only call functions and classes")));
+        }
+
         self.frames.push(CallFrame {
             fun: closure,
             ip: 0,
