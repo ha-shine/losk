@@ -149,7 +149,7 @@ impl Compiler {
             Type::Or => ParseRule::new(None, Some(Self::or), Precedence::Or),
             Type::Print => ParseRule::new(None, None, Precedence::None),
             Type::Return => ParseRule::new(None, None, Precedence::None),
-            Type::Super => ParseRule::new(None, None, Precedence::None),
+            Type::Super => ParseRule::new(Some(Self::super_), None, Precedence::None),
             Type::This => ParseRule::new(Some(Self::this), None, Precedence::None),
             Type::Var => ParseRule::new(None, None, Precedence::None),
             Type::While => ParseRule::new(None, None, Precedence::None),
@@ -287,13 +287,36 @@ impl Compiler {
     }
 
     fn class_declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
+        let prev_has_superclass = ctx.has_superclass;
+        let prev_is_in_class = ctx.is_in_class;
+        ctx.is_in_class = true;
+
         let line = ctx.consume(Type::Identifier, "Expect class name.")?;
         let name = ctx.prev.as_ref().unwrap().lexeme.clone();
         let name_constant = ctx.identifier_constant(name.clone())?;
+
         self.declare_variable(ctx)?;
 
         ctx.add_instruction(Instruction::Class(name_constant));
         ctx.define_variable(name_constant, line);
+
+        if ctx.match_type(Type::Less) {
+            ctx.consume(Type::Identifier, "Expect superclass name")?;
+            let superclass = ctx.prev.as_ref().unwrap();
+            if name == superclass.lexeme {
+                return Err(ctx.error("A class can't inherit from itself."));
+            }
+            self.variable(ctx, false)?;
+
+            ctx.begin_scope();
+            ctx.add_local("super".to_string(), None)?;
+            ctx.define_variable(Constant(0), line);
+
+            self.named_variable(ctx, false, name.clone(), line)?;
+            ctx.add_instruction(Instruction::Inherit);
+            ctx.has_superclass = true;
+        }
+
         self.named_variable(ctx, false, name, line)?;
         ctx.consume(Type::LeftBrace, "Expect '{' before class body.")?;
         while !ctx.check(Type::RightBrace) && !ctx.check(Type::Eof) {
@@ -304,6 +327,13 @@ impl Compiler {
         // After building all the methods, the class variable is still on top of the stack and it
         // needs to be popped.
         ctx.add_instruction(Instruction::Pop);
+
+        if ctx.has_superclass {
+            ctx.end_scope();
+        }
+
+        ctx.has_superclass = prev_has_superclass;
+        ctx.is_in_class = prev_is_in_class;
         Ok(())
     }
 
@@ -499,6 +529,8 @@ impl Compiler {
         let current = std::mem::replace(ctx, Context::new(stream, ftype, None));
         ctx.prev = prev;
         ctx.curr = curr;
+        ctx.has_superclass = current.has_superclass;
+        ctx.is_in_class = current.is_in_class;
         ctx.enclosing = Some(Box::new(current));
         self.compile_context(ctx);
 
@@ -713,7 +745,34 @@ impl Compiler {
     }
 
     fn this(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
+        if !ctx.is_in_class {
+            return Err(ctx.error("Can't use 'this' outside of a class."));
+        }
+
         self.variable(ctx, false)
+    }
+
+    fn super_(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
+        if !ctx.is_in_class {
+            return Err(ctx.error("Can't use 'super' outside of a class."));
+        } else if !ctx.has_superclass {
+            return Err(ctx.error("Can't use 'super' in a class with no superclass."));
+        }
+
+        ctx.consume(Type::Dot, "Expect '.' after 'super'.")?;
+        ctx.consume(Type::Identifier, "Expect superclass method name.")?;
+
+        let prev = ctx.prev.as_ref().unwrap();
+        let name = prev.lexeme.clone();
+        let line = prev.line;
+        let name_constant = ctx.identifier_constant(name)?;
+
+        // To access superclass' method, runtime needs access to both the receiver (`this`),
+        // and the superclass of the surrounding method's class.
+        self.named_variable(ctx, false, "this".to_string(), line)?;
+        self.named_variable(ctx, false, "super".to_string(), line)?;
+        ctx.add_instruction(Instruction::GetSuper(name_constant));
+        Ok(())
     }
 
     fn named_variable(

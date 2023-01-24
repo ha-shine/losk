@@ -23,6 +23,7 @@ pub(crate) enum Instruction {
     SetUpvalue(UpvalueIndex),
     SetProperty(Constant),
     GetProperty(Constant),
+    GetSuper(Constant),
     Equal,
     Greater,
     Less,
@@ -43,6 +44,7 @@ pub(crate) enum Instruction {
     Class(Constant),
     Method(Constant),
     Invoke(Invoke),
+    Inherit,
 }
 
 // The position of a value on the stack represented in different ways -

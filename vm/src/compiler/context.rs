@@ -26,6 +26,10 @@ pub(super) struct Context<'token> {
 
     pub(super) ftype: FunctionType,
     pub(super) enclosing: Option<Box<Context<'token>>>,
+    
+    // Superclass related stuffs
+    pub(super) has_superclass: bool,
+    pub(super) is_in_class: bool,
 }
 
 impl<'token> Context<'token> {
@@ -48,6 +52,9 @@ impl<'token> Context<'token> {
 
             ftype,
             enclosing,
+            
+            has_superclass: false,
+            is_in_class: false,
         }
     }
 

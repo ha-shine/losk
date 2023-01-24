@@ -275,8 +275,9 @@ impl<'a> VM<'a> {
                             self.push(val);
                         }
                         None => {
-                            let method = self.bind_method(instance_slot.clone(), field)?;
-                            self.allocate_and_push(HeapValue::BoundMethod(method));
+                            let bound_method =
+                                self.bind_method(instance_slot.clone(), instance.class(), field)?;
+                            self.allocate_and_push(HeapValue::BoundMethod(bound_method));
                         }
                     };
                 }
@@ -311,6 +312,34 @@ impl<'a> VM<'a> {
                         .borrow_mut()
                         .insert(field, value_slot.clone());
                     self.push(value_slot);
+                }
+
+                Instruction::GetSuper(Constant(index)) => {
+                    let name = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(index as usize)
+                        .unwrap()
+                    {
+                        ConstantValue::Str(name) => name.clone(),
+                        _ => panic!("Unreachable"),
+                    };
+
+                    // On stack -> [this, super]
+                    let superclass_slot = self.pop();
+                    let superclass_obj = match superclass_slot {
+                        StackValue::Obj(obj) => obj,
+                        _ => panic!("Unreachable"),
+                    };
+                    let superclass = match &superclass_obj.value {
+                        HeapValue::Class(class) => class,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let instance = self.pop();
+                    let bound_method = self.bind_method(instance, superclass, &name)?;
+                    self.allocate_and_push(HeapValue::BoundMethod(bound_method));
                 }
 
                 Instruction::Equal => {
@@ -502,6 +531,33 @@ impl<'a> VM<'a> {
                             }
                         },
                     }
+                }
+
+                Instruction::Inherit => {
+                    let sup = self.peek_stack(StackPosition::RevOffset(1));
+                    let sub = self.peek_stack(StackPosition::RevOffset(0));
+                    let (sup_obj, sub_obj) = match (sup, sub) {
+                        (StackValue::Obj(sup_obj), StackValue::Obj(sub_obj)) => (sup_obj, sub_obj),
+                        _ => return Err(self.error(format_args!("Superclass must be a class"))),
+                    };
+
+                    let (sup_cls, sub_cls) = match (&sup_obj.value, &sub_obj.value) {
+                        (HeapValue::Class(sup_cls), HeapValue::Class(sub_cls)) => {
+                            (sup_cls, sub_cls)
+                        }
+                        _ => return Err(self.error(format_args!("Superclass must be a class"))),
+                    };
+
+                    sub_cls.methods.borrow_mut().extend(
+                        sup_cls
+                            .methods
+                            .borrow()
+                            .iter()
+                            .map(|(k, v)| (k.clone(), v.clone())),
+                    );
+
+                    // Pop the subclass
+                    self.pop();
                 }
             }
         }
@@ -903,17 +959,12 @@ impl<'a> VM<'a> {
         };
     }
 
-    fn bind_method(&self, instance: StackValue, name: &str) -> VmResult<BoundMethod> {
-        let instance_obj = match &instance {
-            StackValue::Obj(obj) => obj,
-            _ => panic!("Unreachable"),
-        };
-
-        let class = match &instance_obj.value {
-            HeapValue::Instance(instance) => instance.class(),
-            _ => panic!("Unreachable"),
-        };
-
+    fn bind_method(
+        &self,
+        instance: StackValue,
+        class: &Class,
+        name: &str,
+    ) -> VmResult<BoundMethod> {
         let method = match class.methods.borrow().get(name) {
             Some(method) => method.clone(),
             None => return Err(self.error(format_args!("Undefined property '{}'.", name))),
@@ -924,6 +975,8 @@ impl<'a> VM<'a> {
         } else {
             panic!("Unreachable")
         }
+
+        // TODO: Popping, pushing could also have been moved here instead
     }
 
     fn peek_stack(&self, pos: StackPosition) -> &StackValue {
@@ -1208,6 +1261,10 @@ mod tests {
             (
                 include_str!("../../../data/class_invoke_field.lox"),
                 include_str!("../../../data/class_invoke_field.lox.expected"),
+            ),
+            (
+                include_str!("../../../data/inheritance.lox"),
+                include_str!("../../../data/inheritance.lox.expected"),
             ),
         ];
 
