@@ -12,7 +12,7 @@ fn test_programs() {
         .filter(|entry| matches!(entry.path().extension(), Some(extension) if extension == "lox"))
         .filter_map(|entry| {
             let mut exp_filename = entry.file_name().to_os_string();
-            exp_filename.push(".expected");
+            exp_filename.push(".out");
 
             let parent = entry.path().parent().unwrap();
             let exp_filepath = parent.join(exp_filename);
@@ -23,6 +23,8 @@ fn test_programs() {
                 None
             }
         });
+
+    let mut total = 0;
 
     for (src_path, exp_path) in source_files {
         println!("🕑 Running test: {}", src_path.path().display());
@@ -75,5 +77,8 @@ fn test_programs() {
         }
 
         println!("✅ Test complete: {}", src_path.path().display());
+        total += 1;
     }
+
+    println!("✅ Ran {} tests", total)
 }
