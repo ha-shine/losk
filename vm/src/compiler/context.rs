@@ -110,6 +110,7 @@ impl<'token> Context<'token> {
                 .map(LocalResolution::UpValue),
 
             // Enclosing variable report it as a global, so mark it as one
+            // TODO: Maybe I can just check if the name is `this` and throw an error here?
             LocalResolution::Global => Ok(LocalResolution::Global),
         };
 
@@ -174,7 +175,13 @@ impl<'token> Context<'token> {
     }
 
     pub(super) fn add_return(&mut self) {
-        self.add_instruction(Instruction::LiteralNil);
+        match self.ftype {
+            FunctionType::Initializer => {
+                self.add_instruction(Instruction::GetLocal(StackPosition::Offset(0)))
+            }
+            _ => self.add_instruction(Instruction::LiteralNil),
+        };
+
         self.add_instruction(Instruction::Return);
     }
 

@@ -360,6 +360,7 @@ impl<'a> VM<'a> {
                     self.current_frame_mut().loop_(dist + 1)
                 }
 
+                // Probably should be separated into it's own function
                 Instruction::Call(ArgCount(count)) => {
                     if self.frames.len() == VM_MAX_CALLFRAME_COUNT {
                         return Err(self.error(format_args!("Stack overflow.")));
@@ -368,78 +369,7 @@ impl<'a> VM<'a> {
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
                     let obj = self.peek_stack(StackPosition::RevOffset(count)).clone();
-                    if let StackValue::Obj(obj) = obj {
-                        match &obj.value {
-                            HeapValue::Closure(closure) => {
-                                if count != closure.fun.arity {
-                                    return Err(self.error(format_args!(
-                                        "Expected {} arguments but got {}.",
-                                        closure.fun.arity, count
-                                    )));
-                                }
-
-                                self.frames.push(CallFrame {
-                                    fun: obj.clone(),
-                                    ip: 0,
-                                    slots: self.stack.len() - count - 1,
-                                });
-                            }
-
-                            HeapValue::NativeFunction(fun) => {
-                                if count != fun.arity {
-                                    return Err(self.error(format_args!(
-                                        "Expected {} arguments but got {}.",
-                                        fun.arity, count
-                                    )));
-                                }
-
-                                let arg_beg = self.stack.len() - count;
-                                let result = (fun.fun)(&self.stack[arg_beg..]);
-                                self.pop_n(count + 1); // args + function data
-                                if let Some(result) = result {
-                                    self.store_native_value(result)?;
-                                }
-                            }
-
-                            HeapValue::Class(_) => {
-                                let instance = Instance::new(obj.clone());
-                                self.allocate_and_push(HeapValue::Instance(instance));
-                            }
-
-                            HeapValue::BoundMethod(method) => {
-                                let closure = method.closure();
-
-                                if count != closure.fun.arity {
-                                    return Err(self.error(format_args!(
-                                        "Expected {} arguments but got {}.",
-                                        closure.fun.arity, count
-                                    )));
-                                }
-
-                                self.frames.push(CallFrame {
-                                    fun: method.method.clone(),
-                                    ip: 0,
-                                    slots: self.stack.len() - count - 1,
-                                });
-
-                                // I need to push the receiver as the zero-slot local, instead of the
-                                // bound method itself. `this` is basically the first argument for
-                                // the method.
-                                self.put_stack(
-                                    StackPosition::RevOffset(count),
-                                    method.receiver.clone(),
-                                );
-                            }
-
-                            HeapValue::Str(_) | HeapValue::Upvalue(_) | HeapValue::Instance(_) => {
-                                return Err(
-                                    self.error(format_args!("Can only call functions and classes"))
-                                )
-                            }
-                        }
-                    } else {
-                        return Err(self.error(format_args!("Can only call functions and classes")));
-                    }
+                    self.execute_call(obj, count)?;
                 }
 
                 // Maybe a clearer way is to separate the input and output type of constant.
@@ -591,6 +521,98 @@ impl<'a> VM<'a> {
         let lhs = self.pop();
         let res = op(self, lhs, rhs);
         self.store_op_result(res)
+    }
+
+    fn execute_call(&mut self, ptr: StackValue, args: usize) -> VmResult<()> {
+        if let StackValue::Obj(obj) = ptr {
+            match &obj.value {
+                HeapValue::Closure(closure) => {
+                    if args != closure.fun.arity {
+                        return Err(self.error(format_args!(
+                            "Expected {} arguments but got {}.",
+                            closure.fun.arity, args
+                        )));
+                    }
+
+                    self.frames.push(CallFrame {
+                        fun: obj.clone(),
+                        ip: 0,
+                        slots: self.stack.len() - args - 1,
+                    });
+
+                    Ok(())
+                }
+
+                HeapValue::NativeFunction(fun) => {
+                    if args != fun.arity {
+                        return Err(self.error(format_args!(
+                            "Expected {} arguments but got {}.",
+                            fun.arity, args
+                        )));
+                    }
+
+                    let arg_beg = self.stack.len() - args;
+                    let result = (fun.fun)(&self.stack[arg_beg..]);
+                    self.pop_n(args + 1); // args + function data
+                    if let Some(result) = result {
+                        self.store_native_value(result)?;
+                    }
+
+                    Ok(())
+                }
+
+                HeapValue::Class(_) => {
+                    let instance = Instance::new(obj.clone());
+                    let initializer = instance.class().methods.borrow().get("init").cloned();
+                    self.allocate_and_push(HeapValue::Instance(instance));
+
+                    // The function is at -count position, replace that with the instance
+                    // that is just created
+                    let instance_slot = self.pop();
+                    self.put_stack(StackPosition::RevOffset(args), instance_slot);
+
+                    // If there's an initializer, call the initializer. If there's
+                    // not but the arg count is not 0, the user must have passed
+                    // arguments to the default initializer.
+                    if let Some(initializer) = initializer {
+                        self.execute_call(initializer, args)
+                    } else if args != 0 {
+                        Err(self.error(format_args!("Expected 0 arguments but got {}.", args)))
+                    } else {
+                        Ok(())
+                    }
+                }
+
+                HeapValue::BoundMethod(method) => {
+                    let closure = method.closure();
+
+                    if args != closure.fun.arity {
+                        return Err(self.error(format_args!(
+                            "Expected {} arguments but got {}.",
+                            closure.fun.arity, args
+                        )));
+                    }
+
+                    // I need to push the receiver as the zero-slot local, instead of the
+                    // bound method itself. `this` is basically the first argument for
+                    // the method.
+                    self.put_stack(StackPosition::RevOffset(args), method.receiver.clone());
+
+                    self.frames.push(CallFrame {
+                        fun: method.method.clone(),
+                        ip: 0,
+                        slots: self.stack.len() - args - 1,
+                    });
+                    Ok(())
+                }
+
+                HeapValue::Str(_) | HeapValue::Upvalue(_) | HeapValue::Instance(_) => {
+                    Err(self.error(format_args!("Can only call functions and classes")))
+                }
+            }
+        } else {
+            Err(self.error(format_args!("Can only call functions and classes")))
+        }
     }
 
     fn store_op_result(&mut self, res: OpResult) -> VmResult<()> {
@@ -858,13 +880,8 @@ impl<'a> VM<'a> {
             _ => panic!("Unreachable"),
         };
 
-        let class_obj = match &instance_obj.value {
-            HeapValue::Instance(instance) => &instance.class,
-            _ => panic!("Unreachable"),
-        };
-
-        let class = match &class_obj.value {
-            HeapValue::Class(class) => class,
+        let class = match &instance_obj.value {
+            HeapValue::Instance(instance) => instance.class(),
             _ => panic!("Unreachable"),
         };
 
@@ -1154,6 +1171,10 @@ mod tests {
             (
                 include_str!("../../../data/nested_this.lox"),
                 include_str!("../../../data/nested_this.lox.expected"),
+            ),
+            (
+                include_str!("../../../data/class.lox"),
+                include_str!("../../../data/class.lox.expected"),
             ),
         ];
 

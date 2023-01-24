@@ -183,6 +183,13 @@ impl Instance {
             fields: RefCell::new(HashMap::new()),
         }
     }
+
+    pub(super) fn class(&self) -> &Class {
+        match &self.class.value {
+            HeapValue::Class(class) => class,
+            _ => panic!("Unreachable"),
+        }
+    }
 }
 
 impl PartialEq for Instance {

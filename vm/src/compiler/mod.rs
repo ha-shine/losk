@@ -55,6 +55,7 @@ enum FunctionType {
     Script,
     Function,
     Method,
+    Initializer,
 }
 
 struct Local {
@@ -176,7 +177,9 @@ impl Compiler {
         // A dummy local value needs to be added for special local zero slot that will be used for
         // the closure
         match ctx.ftype {
-            FunctionType::Method => ctx.add_local("this".to_string(), Some(0)).unwrap(),
+            FunctionType::Method | FunctionType::Initializer => {
+                ctx.add_local("this".to_string(), Some(0)).unwrap()
+            }
             FunctionType::Function | FunctionType::Script => {
                 ctx.add_local(String::new(), Some(0)).unwrap()
             }
@@ -188,7 +191,7 @@ impl Compiler {
         // The return functions are always emitted whether the parsed function does return or
         // not. They will not be interpreted if the function return earlier anyway.
         match ctx.ftype {
-            FunctionType::Function | FunctionType::Method => {
+            FunctionType::Function | FunctionType::Method | FunctionType::Initializer => {
                 match self.compile_function(ctx) {
                     Ok(_) => ctx.add_return(),
                     Err(err) => {
@@ -341,6 +344,10 @@ impl Compiler {
         if ctx.match_type(Type::SemiColon) {
             ctx.add_return();
         } else {
+            if let FunctionType::Initializer = ctx.ftype {
+                return Err(ctx.error("Can't return a value from an initializer."));
+            }
+
             self.expression(ctx)?;
             ctx.consume(Type::SemiColon, "Expect ';' after return value.")?;
             ctx.add_instruction(Instruction::Return);
@@ -518,9 +525,13 @@ impl Compiler {
     fn method(&self, ctx: &mut Context) -> CompilationResult<()> {
         ctx.consume(Type::Identifier, "Expect method name.")?;
         let name = ctx.prev.as_ref().unwrap().lexeme.clone();
+        let ftype = match name.as_str() {
+            "init" => FunctionType::Initializer,
+            _ => FunctionType::Method,
+        };
         let name_constant = ctx.identifier_constant(name)?;
 
-        self.function(ctx, FunctionType::Method)?;
+        self.function(ctx, ftype)?;
         ctx.add_instruction(Instruction::Method(name_constant));
         Ok(())
     }

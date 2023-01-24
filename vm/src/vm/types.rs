@@ -62,13 +62,7 @@ impl Display for HeapValue {
             HeapValue::Closure(val) => write!(f, "<Function {}>", val.fun.name),
             HeapValue::NativeFunction(val) => write!(f, "<NativeFunction {}>", val.name),
             HeapValue::Class(cls) => write!(f, "<Class {}>", cls.name),
-            HeapValue::Instance(ins) => {
-                if let HeapValue::Class(cls) = &ins.class.value {
-                    write!(f, "<Instance {}>", cls.name)
-                } else {
-                    panic!()
-                }
-            }
+            HeapValue::Instance(ins) => write!(f, "<Instance {}.class>", ins.class().name),
             HeapValue::BoundMethod(method) => write!(f, "{}", method.method.value),
             HeapValue::Upvalue(_) => panic!("Upvalues should not surface to users"),
         }
