@@ -490,14 +490,18 @@ impl<'a> VM<'a> {
                     };
 
                     let methods = instance.class().methods.borrow();
-                    let method = match methods.get(name) {
-                        Some(method) => method,
-                        None => {
-                            return Err(self.error(format_args!("Undefined property {}.", name)))
-                        }
-                    };
-
-                    self.execute_call(method.clone(), args)?;
+                    match methods.get(name).cloned() {
+                        Some(method) => self.execute_call(method, args)?,
+                        None => match instance.fields.borrow().get(name).cloned() {
+                            Some(field) => {
+                                self.put_stack(StackPosition::RevOffset(args), field.clone());
+                                self.execute_call(field, args)?
+                            }
+                            None => {
+                                return Err(self.error(format_args!("Undefined property {}.", name)))
+                            }
+                        },
+                    }
                 }
             }
         }
@@ -1200,6 +1204,10 @@ mod tests {
             (
                 include_str!("../../../data/class.lox"),
                 include_str!("../../../data/class.lox.expected"),
+            ),
+            (
+                include_str!("../../../data/class_invoke_field.lox"),
+                include_str!("../../../data/class_invoke_field.lox.expected"),
             ),
         ];
 
