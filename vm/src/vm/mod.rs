@@ -534,13 +534,7 @@ impl<'a> VM<'a> {
                         )));
                     }
 
-                    self.frames.push(CallFrame {
-                        fun: obj.clone(),
-                        ip: 0,
-                        slots: self.stack.len() - args - 1,
-                    });
-
-                    Ok(())
+                    self.call_closure(obj.clone(), args)
                 }
 
                 HeapValue::NativeFunction(fun) => {
@@ -597,13 +591,7 @@ impl<'a> VM<'a> {
                     // bound method itself. `this` is basically the first argument for
                     // the method.
                     self.put_stack(StackPosition::RevOffset(args), method.receiver.clone());
-
-                    self.frames.push(CallFrame {
-                        fun: method.method.clone(),
-                        ip: 0,
-                        slots: self.stack.len() - args - 1,
-                    });
-                    Ok(())
+                    self.call_closure(method.method.clone(), args)
                 }
 
                 HeapValue::Str(_) | HeapValue::Upvalue(_) | HeapValue::Instance(_) => {
@@ -613,6 +601,15 @@ impl<'a> VM<'a> {
         } else {
             Err(self.error(format_args!("Can only call functions and classes")))
         }
+    }
+
+    fn call_closure(&mut self, closure: Rc<Object>, args: usize) -> VmResult<()> {
+        self.frames.push(CallFrame {
+            fun: closure,
+            ip: 0,
+            slots: self.stack.len() - args - 1,
+        });
+        Ok(())
     }
 
     fn store_op_result(&mut self, res: OpResult) -> VmResult<()> {
