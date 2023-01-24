@@ -730,19 +730,17 @@ impl<'a> VM<'a> {
         name: &str,
         args: usize,
     ) -> VmResult<()> {
-        let methods = class.methods.borrow();
-        match methods.get(name).cloned() {
-            Some(method) => self.execute_call(method, args)?,
-            None => match instance.fields.borrow().get(name).cloned() {
-                Some(field) => {
-                    self.put_stack(StackPosition::RevOffset(args), field.clone());
-                    self.execute_call(field, args)?;
-                }
-                None => return Err(self.error(format_args!("Undefined property {}.", name))),
-            },
+        if let Some(field) = instance.fields.borrow().get(name).cloned() {
+            self.put_stack(StackPosition::RevOffset(args), field.clone());
+            self.execute_call(field, args)?;
+            return Ok(());
         }
 
-        Ok(())
+        let methods = class.methods.borrow();
+        match methods.get(name).cloned() {
+            Some(method) => self.execute_call(method, args),
+            None => Err(self.error(format_args!("Undefined property {}.", name))),
+        }
     }
 
     fn store_op_result(&mut self, res: OpResult) -> VmResult<()> {
