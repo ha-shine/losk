@@ -86,7 +86,7 @@ impl ParseRule {
 }
 
 #[derive(Debug, Error, PartialEq)]
-#[error("[line {line:?}] compile error: {msg:?}")]
+#[error("[line {line:?}] compile error: {msg}")]
 pub struct CompileError {
     line: usize,
     msg: String,
@@ -545,7 +545,7 @@ impl Compiler {
 
         if !nested.errs.is_empty() {
             ctx.errs.append(&mut nested.errs);
-            Err(ctx.error("Error while parsing function"))
+            Err(ctx.error("Error while parsing function."))
         } else {
             let nested_as_const = ctx.fun.chunk.make_constant(ConstantValue::Fun(nested.fun));
             let const_idx = ctx.unwrap_result(nested_as_const)?;
