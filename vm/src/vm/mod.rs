@@ -461,6 +461,44 @@ impl<'a> VM<'a> {
 
                     class.methods.borrow_mut().insert(name.clone(), body);
                 }
+
+                // When invoke is called, the args must have been pushed onto the stack because of
+                // the `argument_list` call in compiler. Plus, the instance must have been pushed
+                // on the stack just after the `argument_list` because an expression comes
+                // before the `.` syntax. That is the receiver. In that case, I don't need to
+                // create a separate bound method but instead invoke the method from class directly.
+                Instruction::Invoke(Invoke { name, args }) => {
+                    let name = match self
+                        .current_frame()
+                        .function()
+                        .chunk
+                        .get_constant(name.0 as usize)
+                    {
+                        Some(ConstantValue::Str(name)) => name,
+                        _ => panic!("Unreachable"),
+                    };
+
+                    let args = args.0;
+                    let receiver = self.peek_stack(StackPosition::RevOffset(args)).clone();
+                    let instance_obj = match receiver {
+                        StackValue::Obj(obj) => obj,
+                        _ => return Err(self.error(format_args!("Only instances have methods."))),
+                    };
+                    let instance = match &instance_obj.value {
+                        HeapValue::Instance(instance) => instance,
+                        _ => return Err(self.error(format_args!("Only instances have methods."))),
+                    };
+
+                    let methods = instance.class().methods.borrow();
+                    let method = match methods.get(name) {
+                        Some(method) => method,
+                        None => {
+                            return Err(self.error(format_args!("Undefined property {}.", name)))
+                        }
+                    };
+
+                    self.execute_call(method.clone(), args)?;
+                }
             }
         }
     }

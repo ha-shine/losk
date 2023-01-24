@@ -42,6 +42,7 @@ pub(crate) enum Instruction {
     Return,
     Class(Constant),
     Method(Constant),
+    Invoke(Invoke),
 }
 
 // The position of a value on the stack represented in different ways -
@@ -67,6 +68,12 @@ pub(crate) struct ArgCount(pub(crate) usize);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct UpvalueIndex(pub(crate) usize);
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub(crate) struct Invoke {
+    pub(crate) name: Constant,
+    pub(crate) args: ArgCount,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chunk {

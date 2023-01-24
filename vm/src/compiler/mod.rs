@@ -634,6 +634,12 @@ impl Compiler {
         if can_assign && ctx.match_type(Type::Equal) {
             self.expression(ctx)?;
             ctx.add_instruction(Instruction::SetProperty(name_constant));
+        } else if ctx.match_type(Type::LeftParen) {
+            let args = self.argument_list(ctx)?;
+            ctx.add_instruction(Instruction::Invoke(Invoke {
+                name: name_constant,
+                args,
+            }));
         } else {
             ctx.add_instruction(Instruction::GetProperty(name_constant));
         }
