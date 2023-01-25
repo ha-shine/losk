@@ -4,6 +4,7 @@ use losk_core::{TokenStream, Type};
 
 use crate::chunk::*;
 use crate::compiler::context::*;
+use crate::limits::COMP_ARG_LIMIT;
 use crate::value::ConstantValue;
 use crate::Function;
 
@@ -915,8 +916,12 @@ impl Compiler {
             }
         }
 
-        ctx.consume(Type::RightParen, "Expect ')' after arguments.")?;
-        Ok(ArgCount(count))
+        if count >= COMP_ARG_LIMIT {
+            Err(ctx.error("Can't have more than 255 arguments."))
+        } else {
+            ctx.consume(Type::RightParen, "Expect ')' after arguments.")?;
+            Ok(ArgCount(count))
+        }
     }
 
     // Synchronize the token stream if an error is found during compilation, and the course of action

@@ -4,7 +4,7 @@ use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 
 use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
-use crate::limits::UPVALUE_LIMIT;
+use crate::limits::COMP_UPVALUE_LIMIT;
 use crate::value::ConstantValue;
 use crate::vm::types::{HeapValue, Object};
 use crate::vm::StackValue;
@@ -66,7 +66,7 @@ pub struct Function {
     pub(crate) arity: usize,
     pub(crate) chunk: Chunk,
     pub(crate) upvalue_count: usize,
-    pub(crate) upvalues: [Upvalue; UPVALUE_LIMIT],
+    pub(crate) upvalues: [Upvalue; COMP_UPVALUE_LIMIT],
 }
 
 impl Function {
@@ -75,7 +75,7 @@ impl Function {
             name: name.to_string(),
             arity,
             chunk: Chunk::new(),
-            upvalues: [Default::default(); UPVALUE_LIMIT],
+            upvalues: [Default::default(); COMP_UPVALUE_LIMIT],
             upvalue_count: 0,
         }
     }
@@ -89,7 +89,7 @@ impl Function {
                 && self.upvalues[*i].is_local == upvalue.is_local
         }) {
             Ok(UpvalueIndex(i))
-        } else if idx == UPVALUE_LIMIT {
+        } else if idx == COMP_UPVALUE_LIMIT {
             Err("Too many closure variables in a function.")
         } else {
             self.upvalue_count += 1;

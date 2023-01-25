@@ -708,7 +708,10 @@ impl<'a> VM<'a> {
     fn call_closure(&mut self, closure: Rc<Object>, args: usize) -> VmResult<()> {
         if let HeapValue::Closure(closure) = &closure.value {
             if closure.fun.arity != args {
-                return Err(self.error(format_args!("Expected 0 arguments but got {}.", args)));
+                return Err(self.error(format_args!(
+                    "Expected {} arguments but got {}.",
+                    closure.fun.arity, args
+                )));
             }
         } else {
             return Err(self.error(format_args!("Can only call functions and classes")));
