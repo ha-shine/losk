@@ -200,9 +200,15 @@ impl<'token> Context<'token> {
         self.fun.chunk.add_instruction(instruction, from_line)
     }
 
-    pub(super) fn advance(&mut self) {
+    pub(super) fn advance(&mut self) -> CompilationResult<()> {
         self.prev = self.curr.take();
         self.curr = self.stream.next();
+
+        if let Some(err) = self.stream.error() {
+            Err(self.error(&err.to_string()))
+        } else {
+            Ok(())
+        }
     }
 
     // Consume will return the line number of the consumed token for ease.
@@ -212,19 +218,19 @@ impl<'token> Context<'token> {
         match &self.curr {
             Some(token) if token.ty == ty => {
                 let line = token.line;
-                self.advance();
+                self.advance()?;
                 Ok(line)
             }
             _ => Err(self.error(msg)),
         }
     }
 
-    pub(super) fn match_type(&mut self, ty: Type) -> bool {
+    pub(super) fn match_type(&mut self, ty: Type) -> CompilationResult<bool> {
         if !self.check(ty) {
-            false
+            Ok(false)
         } else {
-            self.advance();
-            true
+            self.advance()?;
+            Ok(true)
         }
     }
 
