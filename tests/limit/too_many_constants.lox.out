@@ -1,0 +1,3 @@
+[line 32] compile error: too many constants in one chunk
+[line 34] compile error: Error while parsing function.
+[line 36] compile error: Expect expression.

@@ -10,7 +10,9 @@ use intrusive_collections::LinkedList;
 use native::clock;
 
 use crate::chunk::*;
-use crate::limits::{GC_HEAP_GROW_FACTOR, VM_DEFAULT_STACK_SIZE, VM_MAX_CALLFRAME_COUNT};
+use crate::limits::{
+    GC_HEAP_GROW_FACTOR, VM_DEFAULT_STACK_SIZE, VM_MAX_CALLFRAME_COUNT, VM_STACK_TRACE_LIMIT,
+};
 use crate::object::*;
 use crate::value::ConstantValue;
 use crate::vm::error::*;
@@ -1192,6 +1194,7 @@ impl<'a> VM<'a> {
             .frames
             .iter()
             .rev()
+            .take(VM_STACK_TRACE_LIMIT)
             .map(|frame| {
                 let line = *frame.function().chunk.get_line(frame.ip - 1).unwrap();
                 let name = frame.function().name.clone();

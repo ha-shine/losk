@@ -243,7 +243,10 @@ impl<'a> TokenStream<'a> {
     }
 
     fn current(&self) -> char {
-        self.src.chars().nth(self.current).unwrap()
+        self.src[self.current..self.current + 1]
+            .chars()
+            .next()
+            .unwrap()
     }
 
     fn peek(&self) -> char {

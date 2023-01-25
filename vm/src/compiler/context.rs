@@ -2,6 +2,7 @@ use losk_core::{Token, TokenStream, Type};
 
 use crate::chunk::{Constant, Instruction};
 use crate::compiler::*;
+use crate::limits::COMP_MAX_JUMP_DIST;
 use crate::object::Upvalue;
 use crate::value::ConstantValue;
 use crate::{CompileError, Compiler, Function};
@@ -227,9 +228,14 @@ impl<'token> Context<'token> {
         }
     }
 
-    pub(super) fn emit_loop(&mut self, start: usize, line: usize) {
+    pub(super) fn emit_loop(&mut self, start: usize, line: usize) -> CompilationResult<()> {
         let dist = self.fun.chunk.in_count() - start;
+        if dist > COMP_MAX_JUMP_DIST {
+            return Err(self.error("Loop body too large."));
+        }
+
         self.add_instruction_from(Instruction::Loop(JumpDist(dist)), line);
+        Ok(())
     }
 
     pub(super) fn check(&self, ty: Type) -> bool {

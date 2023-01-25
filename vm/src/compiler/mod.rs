@@ -426,7 +426,7 @@ impl Compiler {
         self.statement(ctx)?;
 
         line = ctx.prev.as_ref().unwrap().line;
-        ctx.emit_loop(loop_start, line);
+        ctx.emit_loop(loop_start, line)?;
         ctx.fun.chunk.patch_jump(exit_jump);
         ctx.add_instruction(Instruction::Pop);
 
@@ -470,7 +470,7 @@ impl Compiler {
             // After incrementing the variable, loop back to the start - which is the condition
             // testing instruction.
             let line = ctx.consume(Type::RightParen, "Expect ')' after for clauses.")?;
-            ctx.emit_loop(loop_start, line);
+            ctx.emit_loop(loop_start, line)?;
 
             // The block is set to be looped back to the start - which normally is testing condition.
             // But if there's incrementing statement, it should be ran first before test condition.
@@ -484,7 +484,7 @@ impl Compiler {
 
         // The block start
         self.statement(ctx)?;
-        ctx.emit_loop(loop_start, ctx.prev.as_ref().unwrap().line);
+        ctx.emit_loop(loop_start, ctx.prev.as_ref().unwrap().line)?;
 
         if let Some(dist) = exit_jump {
             ctx.fun.chunk.patch_jump(dist);
@@ -725,7 +725,8 @@ impl Compiler {
     fn number(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
         let value = ConstantValue::from(prev.value.clone());
-        let constant = ctx.fun.chunk.make_constant(value).unwrap();
+        let constant = ctx.fun.chunk.make_constant(value);
+        let constant = ctx.unwrap_result(constant)?;
         ctx.add_instruction_from(Instruction::Constant(constant), prev.line);
         Ok(())
     }
@@ -733,7 +734,8 @@ impl Compiler {
     fn string(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
         let prev = ctx.prev.as_ref().unwrap();
         let value = ConstantValue::from(prev.value.clone());
-        let constant = ctx.fun.chunk.make_constant(value).unwrap();
+        let constant = ctx.fun.chunk.make_constant(value);
+        let constant = ctx.unwrap_result(constant)?;
         ctx.add_instruction_from(Instruction::Constant(constant), prev.line);
         Ok(())
     }
