@@ -1,0 +1,3 @@
+[line 2] compile error: Can't use 'super' in a class with no superclass.
+[line 3] compile error: Error while parsing function.
+[line 4] compile error: Expect expression.

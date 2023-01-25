@@ -1,0 +1,3 @@
+Runtime error: Expected 2 arguments but got 1.
+[line 8] in foo
+[line 12] in <script>

@@ -1,0 +1,3 @@
+Runtime error: Undefined property doesNotExist.
+[line 4] in foo
+[line 8] in <script>

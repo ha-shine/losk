@@ -1,0 +1,3 @@
+[line 5] compile error: Expect '.' after 'super'.
+[line 6] compile error: Error while parsing function.
+[line 7] compile error: Expect expression.
