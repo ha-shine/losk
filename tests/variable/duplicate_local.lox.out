@@ -1,0 +1,2 @@
+[line 2] compile error: Already a variable with this name in this scope.
+[line 4] compile error: Expect expression.

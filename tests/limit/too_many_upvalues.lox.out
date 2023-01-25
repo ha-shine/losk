@@ -1,4 +1,4 @@
-[line 0] compile error: Too many closure variables in a function.
+[line 52] compile error: Too many closure variables in a function.
 [line 54] compile error: Error while parsing function.
 [line 54] compile error: Error while parsing function.
 [line 54] compile error: Error while parsing function.

@@ -210,30 +210,24 @@ impl Compiler {
 
         // Only advance to next character if the function being parsed is a script because
         // if function, the context needs access to previous token for naming the function.
-        if let Err(err) = ctx.advance() {
-            ctx.errs.push(err);
-            return;
-        }
+        ctx.advance();
 
         // Maybe check the result at this level and do the synchronisation here?
-        loop {
-            match ctx.match_type(Type::Eof) {
-                Ok(true) => break,
-                Ok(false) => match self.declaration(ctx) {
-                    Ok(_) => {}
-                    Err(err) => {
-                        ctx.errs.push(err);
-                        self.synchronize(ctx);
-                    }
-                },
+        while !ctx.match_type(Type::Eof) {
+            match self.declaration(ctx) {
+                Ok(_) => {}
                 Err(err) => {
                     ctx.errs.push(err);
-                    return;
+                    self.synchronize(ctx);
                 }
             }
         }
 
-        ctx.add_return();
+        if let Some(err) = ctx.stream.error() {
+            ctx.errs.push(ctx.error(&err.to_string()));
+        } else {
+            ctx.add_return();
+        }
     }
 
     fn compile_function(&self, ctx: &mut Context) -> CompilationResult<()> {
@@ -251,7 +245,7 @@ impl Compiler {
                 let constant = self.parse_variable(ctx, "Expect parameter name")?;
                 ctx.define_variable(constant, ctx.prev.as_ref().unwrap().line);
 
-                if !ctx.match_type(Type::Comma)? {
+                if !ctx.match_type(Type::Comma) {
                     break;
                 }
             }
@@ -264,11 +258,11 @@ impl Compiler {
     }
 
     fn declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
-        if ctx.match_type(Type::Var)? {
+        if ctx.match_type(Type::Var) {
             self.var_declaration(ctx)
-        } else if ctx.match_type(Type::Fun)? {
+        } else if ctx.match_type(Type::Fun) {
             self.fun_declaration(ctx)
-        } else if ctx.match_type(Type::Class)? {
+        } else if ctx.match_type(Type::Class) {
             self.class_declaration(ctx)
         } else {
             self.statement(ctx)
@@ -278,7 +272,7 @@ impl Compiler {
     fn var_declaration(&self, ctx: &mut Context) -> CompilationResult<()> {
         let constant = self.parse_variable(ctx, "Expect variable name.")?;
 
-        if ctx.match_type(Type::Equal)? {
+        if ctx.match_type(Type::Equal) {
             self.expression(ctx)?;
         } else {
             ctx.add_instruction(Instruction::LiteralNil);
@@ -311,7 +305,7 @@ impl Compiler {
         ctx.add_instruction(Instruction::Class(name_constant));
         ctx.define_variable(name_constant, line);
 
-        if ctx.match_type(Type::Less)? {
+        if ctx.match_type(Type::Less) {
             ctx.consume(Type::Identifier, "Expect superclass name")?;
             let superclass = ctx.prev.as_ref().unwrap();
             if name == superclass.lexeme {
@@ -349,17 +343,17 @@ impl Compiler {
     }
 
     fn statement(&self, ctx: &mut Context) -> CompilationResult<()> {
-        if ctx.match_type(Type::Print)? {
+        if ctx.match_type(Type::Print) {
             self.print_statement(ctx)?;
-        } else if ctx.match_type(Type::If)? {
+        } else if ctx.match_type(Type::If) {
             self.if_statement(ctx)?;
-        } else if ctx.match_type(Type::Return)? {
+        } else if ctx.match_type(Type::Return) {
             self.return_statement(ctx)?;
-        } else if ctx.match_type(Type::While)? {
+        } else if ctx.match_type(Type::While) {
             self.while_statement(ctx)?;
-        } else if ctx.match_type(Type::For)? {
+        } else if ctx.match_type(Type::For) {
             self.for_statement(ctx)?;
-        } else if ctx.match_type(Type::LeftBrace)? {
+        } else if ctx.match_type(Type::LeftBrace) {
             ctx.begin_scope();
             self.block(ctx)?;
             ctx.end_scope();
@@ -382,7 +376,7 @@ impl Compiler {
             return Err(ctx.error("Can't return from top-level code."));
         }
 
-        if ctx.match_type(Type::SemiColon)? {
+        if ctx.match_type(Type::SemiColon) {
             ctx.add_return();
         } else {
             if let FunctionType::Initializer = ctx.ftype {
@@ -416,7 +410,7 @@ impl Compiler {
         ctx.fun.chunk.patch_jump(then_jump);
         ctx.add_instruction_from(Instruction::Pop, line);
 
-        if ctx.match_type(Type::Else)? {
+        if ctx.match_type(Type::Else) {
             self.statement(ctx)?;
         }
 
@@ -450,9 +444,9 @@ impl Compiler {
         ctx.consume(Type::LeftParen, "Expect '(' after 'for'.")?;
 
         // The first part, initialization statement.
-        if ctx.match_type(Type::SemiColon)? {
+        if ctx.match_type(Type::SemiColon) {
             // No initializer
-        } else if ctx.match_type(Type::Var)? {
+        } else if ctx.match_type(Type::Var) {
             self.var_declaration(ctx)?;
         } else {
             self.expression_statement(ctx)?;
@@ -461,7 +455,7 @@ impl Compiler {
         // The second part, where the condition is tested before running the block.
         let mut loop_start = ctx.fun.chunk.in_count();
         let mut exit_jump = None;
-        if !ctx.match_type(Type::SemiColon)? {
+        if !ctx.match_type(Type::SemiColon) {
             self.expression(ctx)?;
             let line = ctx.consume(Type::SemiColon, "Expect ';' after loop condition.")?;
 
@@ -472,7 +466,7 @@ impl Compiler {
 
         // The third part, incrementing the variable (or any expression statement - without ";").
         // This will be run after every block.
-        if !ctx.match_type(Type::RightParen)? {
+        if !ctx.match_type(Type::RightParen) {
             let body_jump = ctx.add_instruction(Instruction::Jump(JumpDist(0)));
             let increment_start = ctx.fun.chunk.in_count();
             self.expression(ctx)?;
@@ -675,10 +669,10 @@ impl Compiler {
         let name = ctx.prev.as_ref().unwrap().lexeme.clone();
         let name_constant = ctx.identifier_constant(name)?;
 
-        if can_assign && ctx.match_type(Type::Equal)? {
+        if can_assign && ctx.match_type(Type::Equal) {
             self.expression(ctx)?;
             ctx.add_instruction(Instruction::SetProperty(name_constant));
-        } else if ctx.match_type(Type::LeftParen)? {
+        } else if ctx.match_type(Type::LeftParen) {
             let args = self.argument_list(ctx)?;
             ctx.add_instruction(Instruction::Invoke(Invoke {
                 name: name_constant,
@@ -785,7 +779,7 @@ impl Compiler {
         // and the superclass of the surrounding method's class.
         self.named_variable(ctx, false, "this".to_string(), line)?;
 
-        if ctx.match_type(Type::LeftParen)? {
+        if ctx.match_type(Type::LeftParen) {
             let args = self.argument_list(ctx)?;
             self.named_variable(ctx, false, "super".to_string(), line)?;
             ctx.add_instruction(Instruction::SuperInvoke(Invoke {
@@ -827,7 +821,7 @@ impl Compiler {
             }
         };
 
-        if can_assign && ctx.match_type(Type::Equal)? {
+        if can_assign && ctx.match_type(Type::Equal) {
             self.expression(ctx)?;
             ctx.add_instruction_from(set_op, line);
         } else {
@@ -844,7 +838,7 @@ impl Compiler {
     // higher than the current precedence defined. As long as the next token's infix precedence
     // is higher, the parser will keep parsing those expression until none is left.
     fn parse_precedence(&self, ctx: &mut Context, precedence: Precedence) -> CompilationResult<()> {
-        ctx.advance()?;
+        ctx.advance();
         let prev = ctx.prev.as_ref().unwrap();
         let rule = Self::rule(prev.ty);
 
@@ -869,13 +863,15 @@ impl Compiler {
             }
         }
 
-        while precedence as usize <= Self::rule(ctx.curr.as_ref().unwrap().ty).precedence as usize {
-            ctx.advance()?;
+        while ctx.stream.error().is_none()
+            && precedence as usize <= Self::rule(ctx.curr.as_ref().unwrap().ty).precedence as usize
+        {
+            ctx.advance();
             let rule = Self::rule(ctx.prev.as_ref().unwrap().ty);
             (rule.infix.unwrap())(self, ctx, can_assign)?;
         }
 
-        if can_assign && ctx.match_type(Type::Equal)? {
+        if can_assign && ctx.match_type(Type::Equal) {
             Err(ctx.error("Invalid assignment target."))
         } else {
             Ok(())
@@ -920,7 +916,7 @@ impl Compiler {
                 self.expression(ctx)?;
                 count += 1;
 
-                if !ctx.match_type(Type::Comma)? {
+                if !ctx.match_type(Type::Comma) {
                     break;
                 }
             }
@@ -937,23 +933,29 @@ impl Compiler {
     // Synchronize the token stream if an error is found during compilation, and the course of action
     // is to simply skip all tokens until the end of statement or the eof is found.
     fn synchronize(&self, ctx: &mut Context) {
-        while ctx.curr.as_ref().unwrap().ty != Type::Eof {
-            if let Type::SemiColon = ctx.prev.as_ref().unwrap().ty {
-                return;
-            }
+        loop {
+            match ctx.curr.as_ref() {
+                Some(val) if val.ty == Type::Eof => break,
+                Some(val) => {
+                    if let Type::SemiColon = ctx.prev.as_ref().unwrap().ty {
+                        return;
+                    }
 
-            match ctx.curr.as_ref().unwrap().ty {
-                Type::Class
-                | Type::Fun
-                | Type::Var
-                | Type::For
-                | Type::If
-                | Type::While
-                | Type::Print
-                | Type::Return => {
-                    return;
+                    match val.ty {
+                        Type::Class
+                        | Type::Fun
+                        | Type::Var
+                        | Type::For
+                        | Type::If
+                        | Type::While
+                        | Type::Print
+                        | Type::Return => {
+                            return;
+                        }
+                        _ => ctx.advance(),
+                    }
                 }
-                _ => ctx.advance().unwrap(),
+                None => break,
             }
         }
     }

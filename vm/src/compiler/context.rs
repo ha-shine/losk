@@ -31,6 +31,8 @@ pub(super) struct Context<'token> {
     // Superclass related stuffs
     pub(super) has_superclass: bool,
     pub(super) is_in_class: bool,
+
+    line: usize,
 }
 
 impl<'token> Context<'token> {
@@ -56,6 +58,8 @@ impl<'token> Context<'token> {
 
             has_superclass: false,
             is_in_class: false,
+
+            line: 0,
         }
     }
 
@@ -200,15 +204,13 @@ impl<'token> Context<'token> {
         self.fun.chunk.add_instruction(instruction, from_line)
     }
 
-    pub(super) fn advance(&mut self) -> CompilationResult<()> {
+    pub(super) fn advance(&mut self) {
         self.prev = self.curr.take();
         self.curr = self.stream.next();
 
-        if let Some(err) = self.stream.error() {
-            Err(self.error(&err.to_string()))
-        } else {
-            Ok(())
-        }
+        if let Some(val) = &self.curr {
+            self.line = val.line
+        };
     }
 
     // Consume will return the line number of the consumed token for ease.
@@ -218,19 +220,19 @@ impl<'token> Context<'token> {
         match &self.curr {
             Some(token) if token.ty == ty => {
                 let line = token.line;
-                self.advance()?;
+                self.advance();
                 Ok(line)
             }
             _ => Err(self.error(msg)),
         }
     }
 
-    pub(super) fn match_type(&mut self, ty: Type) -> CompilationResult<bool> {
+    pub(super) fn match_type(&mut self, ty: Type) -> bool {
         if !self.check(ty) {
-            Ok(false)
+            false
         } else {
-            self.advance()?;
-            Ok(true)
+            self.advance();
+            true
         }
     }
 
@@ -245,14 +247,21 @@ impl<'token> Context<'token> {
     }
 
     pub(super) fn check(&self, ty: Type) -> bool {
-        self.curr.as_ref().unwrap().ty == ty
+        match self.curr.as_ref() {
+            Some(val) => val.ty == ty,
+            None => matches!(ty, Type::Eof),
+        }
     }
 
     pub(super) fn error(&self, msg: &str) -> CompileError {
         let line = if let Some(curr) = &self.curr {
             curr.line
+        } else if let Some(prev) = &self.prev {
+            prev.line
         } else {
-            0
+            // `line` is not a very accurate at tracking the token's line, so take it
+            // only as the last resort.
+            self.line
         };
 
         CompileError::new(line, msg)

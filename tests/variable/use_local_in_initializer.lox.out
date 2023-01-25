@@ -1,0 +1,2 @@
+[line 2] compile error: Can't read local variable in its own initializer
+[line 4] compile error: Expect expression.
