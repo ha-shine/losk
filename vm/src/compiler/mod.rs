@@ -485,12 +485,13 @@ impl Compiler {
         // The block start
         self.statement(ctx)?;
         ctx.emit_loop(loop_start, ctx.prev.as_ref().unwrap().line);
-        ctx.end_scope();
 
         if let Some(dist) = exit_jump {
             ctx.fun.chunk.patch_jump(dist);
             ctx.add_instruction(Instruction::Pop);
         }
+
+        ctx.end_scope();
 
         Ok(())
     }

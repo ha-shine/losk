@@ -26,7 +26,7 @@ pub(super) struct Context<'token> {
 
     pub(super) ftype: FunctionType,
     pub(super) enclosing: Option<Box<Context<'token>>>,
-    
+
     // Superclass related stuffs
     pub(super) has_superclass: bool,
     pub(super) is_in_class: bool,
@@ -52,7 +52,7 @@ impl<'token> Context<'token> {
 
             ftype,
             enclosing,
-            
+
             has_superclass: false,
             is_in_class: false,
         }
@@ -93,11 +93,6 @@ impl<'token> Context<'token> {
         // upvalue. If there are no parents, the variable must be global.
         if self.enclosing.is_none() {
             return Ok(LocalResolution::Global);
-        }
-
-        // Check if the variable is defined in local scope
-        if let Some(val) = self.resolve_local(name)? {
-            return Ok(LocalResolution::Local(val));
         }
 
         let result = match self.enclosing.as_mut().unwrap().resolve_variable(name)? {

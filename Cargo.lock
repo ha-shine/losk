@@ -614,7 +614,6 @@ dependencies = [
  "intrusive-collections",
  "losk-core",
  "phf",
- "rayon",
  "thiserror",
  "walkdir",
 ]

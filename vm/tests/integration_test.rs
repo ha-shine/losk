@@ -1,5 +1,4 @@
 use losk_core::Scanner;
-use rayon::prelude::*;
 use std::fs::File;
 use std::io::Read;
 use vm::{Compiler, VM};
@@ -9,7 +8,6 @@ use walkdir::WalkDir;
 fn test_programs() {
     let source_files = WalkDir::new("../tests")
         .into_iter()
-        .par_bridge()
         .filter_map(|entry| entry.ok())
         .filter(|entry| matches!(entry.path().extension(), Some(extension) if extension == "lox"))
         .filter_map(|entry| {
@@ -26,7 +24,11 @@ fn test_programs() {
             }
         });
 
-    source_files.for_each(|(src_path, exp_path)| {
+    let mut total = 0;
+
+    for (src_path, exp_path) in source_files {
+        println!("🕑 Running test: {}", src_path.path().display());
+
         let mut src_content = String::new();
         let mut exp_content = String::new();
 
@@ -59,7 +61,7 @@ fn test_programs() {
 
                 assert_eq!(exp_content, err_combined);
                 println!("✅ Test complete: {}", src_path.path().display());
-                return;
+                continue;
             }
         };
 
@@ -75,5 +77,8 @@ fn test_programs() {
         }
 
         println!("✅ Test complete: {}", src_path.path().display());
-    });
+        total += 1;
+    }
+
+    println!("✅ Ran {} tests", total)
 }
