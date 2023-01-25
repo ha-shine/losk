@@ -209,10 +209,16 @@ impl PartialEq for Instance {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(super) struct BoundMethod {
     pub(super) receiver: StackValue,
     pub(super) method: Rc<Object>,
+}
+
+impl PartialEq for BoundMethod {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
 }
 
 impl BoundMethod {
