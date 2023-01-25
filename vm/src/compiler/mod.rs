@@ -683,7 +683,7 @@ impl Compiler {
     // is false, leave that value on the stack and skip the whole expression. If not, pop that
     // value from the stack and evaluate the next expression.
     fn and(&self, ctx: &mut Context, _: bool) -> CompilationResult<()> {
-        let end_jump = ctx.add_instruction(Instruction::Jump(JumpDist(0)));
+        let end_jump = ctx.add_instruction(Instruction::JumpIfFalse(JumpDist(0)));
         ctx.add_instruction(Instruction::Pop);
         self.parse_precedence(ctx, Precedence::And)?;
         ctx.fun.chunk.patch_jump(end_jump);
