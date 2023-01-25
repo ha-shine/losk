@@ -364,17 +364,14 @@ impl<'a> VM<'a> {
                 Instruction::JumpIfFalse(JumpDist(dist)) => {
                     // The pointer has already been incremented by 1 before this match statement,
                     // so need to subtract 1 from jump distance.
-                    match self.peek_stack(StackPosition::RevOffset(0)) {
-                        StackValue::Bool(val) => {
-                            if !val {
+                    match self.is_falsey(self.peek_stack(StackPosition::RevOffset(0)).clone()) {
+                        Ok(StackOrHeap::Stack(StackValue::Bool(val))) => {
+                            if val {
                                 self.current_frame_mut().jump(dist - 1)
                             }
                         }
-                        _ => {
-                            return Err(
-                                self.error(format_args!("Expect test condition to be boolean."))
-                            )
-                        }
+                        Err(msg) => return Err(self.error(format_args!("{}", msg))),
+                        _ => panic!("Unreachable"),
                     }
                 }
 
@@ -757,6 +754,14 @@ impl<'a> VM<'a> {
         }
     }
 
+    fn is_falsey(&self, val: StackValue) -> OpResult {
+        match val {
+            StackValue::Bool(val) => Ok(StackOrHeap::Stack(StackValue::Bool(!val))),
+            StackValue::Nil => Ok(StackOrHeap::Stack(StackValue::Bool(true))),
+            _ => Ok(StackOrHeap::Stack(StackValue::Bool(false))),
+        }
+    }
+
     // These operators mean that the GC should be carefully considered.
     // Say you're adding two strings, the result string will be allocated on the heap
     // that is the concatenation of the two operands.
@@ -828,10 +833,7 @@ impl<'a> VM<'a> {
     }
 
     fn not(&mut self, val: StackValue) -> OpResult {
-        match val {
-            StackValue::Bool(val) => Ok(StackOrHeap::Stack(StackValue::Bool(!val))),
-            _ => Err("Expect operand to be a boolean value."),
-        }
+        self.is_falsey(val)
     }
 
     fn neg(&mut self, val: StackValue) -> OpResult {
