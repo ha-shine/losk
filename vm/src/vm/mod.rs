@@ -1,3 +1,4 @@
+use ahash::RandomState;
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::HashMap;
@@ -50,7 +51,7 @@ pub struct VM<'a> {
     // or heap values. The expression after the var declaration statement is pushed onto the stack
     // so it makes sense to map to a `StackValue`. Care should be taken so that the GC scans this
     // table for reachability too.
-    globals: HashMap<String, StackValue>,
+    globals: HashMap<String, StackValue, RandomState>,
 
     // The VM will write the output strings into this stdout
     stdout: &'a mut dyn Write,
@@ -70,7 +71,7 @@ impl<'a> VM<'a> {
             objects: LinkedList::new(HeapListAdapter::new()),
             frames: Vec::with_capacity(VM_MAX_CALLFRAME_COUNT),
             open_upvalues: LinkedList::new(UpvalueListAdapter::new()),
-            globals: HashMap::new(),
+            globals: HashMap::default(),
             stdout,
             bytes_allocated: 0,
             next_gc: 1024 * 1024,
