@@ -13,7 +13,7 @@ pub(super) type NativeFn = fn(&[StackValue]) -> Option<NativeValue>;
 
 #[allow(dead_code)]
 pub(super) enum NativeValue {
-    Num(usize),
+    Num(f64),
     Bool(bool),
     Str(String),
     Nil,
@@ -22,7 +22,7 @@ pub(super) enum NativeValue {
 impl From<NativeValue> for ConstantValue {
     fn from(value: NativeValue) -> Self {
         match value {
-            NativeValue::Num(val) => ConstantValue::Double(val as f64),
+            NativeValue::Num(val) => ConstantValue::Double(val),
             NativeValue::Bool(val) => ConstantValue::Bool(val),
             NativeValue::Str(val) => ConstantValue::Str(val),
             NativeValue::Nil => ConstantValue::Nil,
