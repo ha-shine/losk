@@ -22,3 +22,39 @@ walkdir = "2.3.2"
 [[bench]]
 name = "fib"
 harness = false
+
+[[bench]]
+name = "binary_trees"
+harness = false
+
+[[bench]]
+name = "equality"
+harness = false
+
+[[bench]]
+name = "instantiation"
+harness = false
+
+[[bench]]
+name = "invocation"
+harness = false
+
+[[bench]]
+name = "method_call"
+harness = false
+
+[[bench]]
+name = "properties"
+harness = false
+
+[[bench]]
+name = "trees"
+harness = false
+
+[[bench]]
+name = "zoo"
+harness = false
+
+[[bench]]
+name = "zoo_batch"
+harness = false

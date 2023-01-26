@@ -6,14 +6,14 @@ use losk_core::Scanner;
 use vm::{Compiler, VM};
 
 fn benchmark(c: &mut Criterion) {
-    let src = include_str!("../../tests/benchmark/fib.lox");
+    let src = include_str!("../../tests/benchmark/equality.lox");
     let mut scanner = Scanner::new();
     let compiler = Compiler::new();
     let stream = scanner.scan_tokens(src);
     let compiled = compiler.compile(stream).unwrap();
     let mut sink = io::sink();
 
-    c.bench_function("fib", |b| {
+    c.bench_function("equality", |b| {
         b.iter(|| {
             let mut vm = VM::new(&mut sink);
             vm.run(compiled.clone()).unwrap();

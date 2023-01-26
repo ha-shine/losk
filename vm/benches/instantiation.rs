@@ -5,15 +5,15 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use losk_core::Scanner;
 use vm::{Compiler, VM};
 
-fn benchmark(c: &mut Criterion) {
-    let src = include_str!("../../tests/benchmark/fib.lox");
+fn benchmark_fib(c: &mut Criterion) {
+    let src = include_str!("../../tests/benchmark/instantiation.lox");
     let mut scanner = Scanner::new();
     let compiler = Compiler::new();
     let stream = scanner.scan_tokens(src);
     let compiled = compiler.compile(stream).unwrap();
     let mut sink = io::sink();
 
-    c.bench_function("fib", |b| {
+    c.bench_function("instantiation", |b| {
         b.iter(|| {
             let mut vm = VM::new(&mut sink);
             vm.run(compiled.clone()).unwrap();
