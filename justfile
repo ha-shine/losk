@@ -1,5 +1,10 @@
+# Build with release profile and copy to root directory
+build:
+    cargo build --release
+    cp ./target/release/vm ./clox-rs
+
 # Run a specific benchmark
-bench NAME:
+bench NAME: build
     mkdir -p ./bench
     hyperfine --warmup 3 --parameter-list \
         --export-markdown ./bench/{{NAME}}.md \

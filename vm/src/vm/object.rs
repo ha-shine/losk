@@ -1,3 +1,4 @@
+use ahash::RandomState;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
@@ -156,14 +157,14 @@ pub(super) enum UpvalueState {
 #[derive(Debug, PartialEq)]
 pub(super) struct Class {
     pub(super) name: String,
-    pub(super) methods: RefCell<HashMap<String, StackValue>>,
+    pub(super) methods: RefCell<HashMap<String, StackValue, RandomState>>,
 }
 
 impl Class {
     pub(super) fn new(name: String) -> Class {
         Class {
             name,
-            methods: RefCell::new(HashMap::new()),
+            methods: RefCell::new(HashMap::default()),
         }
     }
 }
@@ -173,14 +174,14 @@ pub(super) struct Instance {
     pub(super) class: Rc<Object>,
 
     // RefCell is required here because I need to set the properties
-    pub(super) fields: RefCell<HashMap<String, StackValue>>,
+    pub(super) fields: RefCell<HashMap<String, StackValue, RandomState>>,
 }
 
 impl Instance {
     pub(super) fn new(class: Rc<Object>) -> Instance {
         Instance {
             class,
-            fields: RefCell::new(HashMap::new()),
+            fields: RefCell::new(HashMap::default()),
         }
     }
 
