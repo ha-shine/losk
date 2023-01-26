@@ -1,7 +1,0 @@
-var name = "Shine";
-var greet = "Hello, " + name;
-print greet;
-
-name = "John";
-greet = "Hello, " + name;
-print greet;

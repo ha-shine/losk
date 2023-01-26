@@ -1,5 +1,0 @@
-fun foo(name) {
-    print "Hello, " + name;
-}
-
-print foo;
