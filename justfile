@@ -14,4 +14,8 @@ bench NAME: build
         'python3 ./tests/benchmark/{{NAME}}.py'
 
 # Run all benchmarks
-bench-all: (bench "binary_trees") (bench "equality") (bench "fib") (bench "instantiation") (bench "invocation") (bench "method_call") (bench "properties") (bench "trees") (bench "zoo") (bench "zoo_batch")
+bench-all: (bench "binary_trees") (bench "equality") (bench "fib") (bench "instantiation") (bench "invocation") (bench "method_call") (bench "properties") (bench "trees") (bench "zoo")
+
+# Generate plot files
+plot:
+    python ./scripts/plot_benchmarks.py
