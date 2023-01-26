@@ -1,12 +1,9 @@
 use ahash::RandomState;
 use std::cell::RefCell;
-use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 use std::rc::Rc;
-
-use intrusive_collections::LinkedList;
 
 use native::clock;
 
@@ -34,7 +31,7 @@ pub struct VM<'a> {
     // Note that the heap objects need to be mutable because of two reasons -
     //   - Garbage collector will mark the objects
     //   - Closure's captured values will be updated with `SetUpvalue` instruction
-    objects: LinkedList<HeapListAdapter>,
+    objects: Vec<Rc<Object>>,
 
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
@@ -44,7 +41,7 @@ pub struct VM<'a> {
     // List of upvalues that have not been closed. They are objects here because there's not a good
     // way to point directly to the UpvalueObject unless I go the route of double indirection
     // by wrapping the UpvalueObject itself in an Rc.
-    open_upvalues: LinkedList<UpvalueListAdapter>,
+    open_upvalues: Vec<Rc<Object>>,
 
     // Globals are used to map between a variable defined on the global scope to it's corresponding
     // value. The values are of type `StackValue` because the globals can be mapped to either stack
@@ -68,9 +65,9 @@ impl<'a> VM<'a> {
         // In the
         let mut vm = VM {
             stack: Vec::with_capacity(VM_DEFAULT_STACK_SIZE),
-            objects: LinkedList::new(HeapListAdapter::new()),
+            objects: Vec::new(),
             frames: Vec::with_capacity(VM_MAX_CALLFRAME_COUNT),
-            open_upvalues: LinkedList::new(UpvalueListAdapter::new()),
+            open_upvalues: Vec::new(),
             globals: HashMap::default(),
             stdout,
             bytes_allocated: 0,
@@ -882,75 +879,25 @@ impl<'a> VM<'a> {
 
     fn capture_upvalue(&mut self, pos: StackPosition) -> Rc<Object> {
         let index = self.stack_pos_to_index(pos);
-        let mut cursor = self.open_upvalues.cursor_mut();
-        cursor.move_next();
 
-        // The loop will return an Rc of object that should be inserted into the upvalues.
-        // It will also ensure the cursor is always pointing to a position right next to where the
-        // object go so that the object should use the cursor's `insert_before`. This object will
-        // not be linked yet if it's a new object and I can just check this link status to ensure
-        // the object is pushed on to the heap.
-        //
-        // This is because of the restriction with Rust where `self` can't be borrowed twice,
-        // once with the cursor and again in allocate_object.
-        let obj = loop {
-            // Because of more rust (and intrusive pointer) restrictions, I have to extract
-            // the value of comparison out of this and do the cursor processing after this. Here,
-            // `get` is borrowed immutably, but I need to remove the node (or move to the next)
-            // node which requires a mutable cursor.
-            let comparison = match cursor.get() {
-                Some(Object {
-                    value: HeapValue::Upvalue(val),
-                    ..
-                }) => match &*val.borrow() {
-                    UpvalueState::Open(StackPosition::Index(cursor_index)) => {
-                        cursor_index.cmp(&index)
+        for open in &self.open_upvalues {
+            match &open.value {
+                HeapValue::Upvalue(val) => match &*val.borrow() {
+                    UpvalueState::Open(pos) => {
+                        let curr = self.stack_pos_to_index(*pos);
+                        if curr == index {
+                            return open.clone();
+                        }
                     }
-                    _ => panic!("Unreachable"),
+                    _ => continue,
                 },
-
-                // If current is null, that means it's the end of the list. Create a new node and add
-                // it to the list
-                None => {
-                    break Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos))));
-                }
-
-                // This is a cursor for open upvalues, so it's definitely a panic to see anything
-                // else. Also, upvalues are captured as purely stack indices, so anything else
-                // is a runtime error.
-                _ => panic!("Unreachable"),
-            };
-
-            match comparison {
-                // The current cursor's index is less than the index of the upvalue being
-                // captured. That means a new upvalue needs to be created, and inserted into
-                // the previous place. The open upvalue objects are sorted based on their
-                // stack position, from topmost value to bottommost.
-                Ordering::Less => {
-                    break Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos))));
-                }
-
-                // Unfortunately, due to the limitation of intrusive linked list, I can't seem
-                // to be able to get the reference to the container (i.e an Rc of object),
-                // but only to the contained &Object. As a work around, it's necessary to remove
-                // the current node, clone the removed Rc and insert it back again.
-                Ordering::Equal => {
-                    // Now cursor is pointing to the one after this
-                    let removed = cursor.remove().unwrap();
-                    break removed;
-                }
-
-                Ordering::Greater => {
-                    cursor.move_next();
-                }
+                _ => panic!("Found non-upvalue in open upvalue list"),
             }
-        };
-
-        cursor.insert_before(obj.clone());
-        if !obj.heap_link.is_linked() {
-            self.allocate_object(obj.clone());
         }
 
+        let obj = Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos))));
+        self.open_upvalues.push(obj.clone());
+        self.allocate_object(obj.clone());
         obj
     }
 
@@ -959,28 +906,30 @@ impl<'a> VM<'a> {
     // will stop as soon as the cursor reaches an open value whose stack position is lower than the
     // given index.
     fn close_upvalues(&mut self, last_index: usize) {
-        let mut cursor = self.open_upvalues.cursor_mut();
-        cursor.move_next();
+        let upvalues = std::mem::take(&mut self.open_upvalues);
+        self.open_upvalues = upvalues
+            .into_iter()
+            .filter(|val| match &val.value {
+                HeapValue::Upvalue(upvalue) => {
+                    let curr = if let UpvalueState::Open(StackPosition::Index(curr)) =
+                        &*upvalue.borrow()
+                    {
+                        *curr
+                    } else {
+                        panic!("Found weird value in open upvalue list");
+                    };
 
-        while !cursor.is_null() {
-            if let HeapValue::Upvalue(val) = &cursor.get().unwrap().value {
-                let index = match &*val.borrow() {
-                    UpvalueState::Open(StackPosition::Index(index)) => *index,
-                    _ => panic!("Found closed upvalue in open upvalue list"),
-                };
-
-                if index < last_index {
-                    break;
+                    if curr >= last_index {
+                        let item = self.stack[curr].clone();
+                        *upvalue.borrow_mut() = UpvalueState::Closed(item);
+                        false
+                    } else {
+                        true
+                    }
                 }
-
-                let item = self.stack[index].clone();
-                *val.borrow_mut() = UpvalueState::Closed(item);
-
-                cursor.remove();
-            } else {
-                panic!("Found non upvalue item in upvalue list")
-            }
-        }
+                _ => panic!("Found non-upvalue in open upvalue list"),
+            })
+            .collect();
     }
 
     // This will return the stack object the given upvalue object is pointing to, which means
@@ -1083,7 +1032,7 @@ impl<'a> VM<'a> {
             self.next_gc = self.bytes_allocated * GC_HEAP_GROW_FACTOR;
         }
 
-        self.objects.push_front(val);
+        self.objects.push(val);
     }
 
     // In the text book, the marking phase is separated into two parts -
@@ -1115,12 +1064,8 @@ impl<'a> VM<'a> {
         }
 
         // Also walk through the open upvalue list
-        let mut cursor = self.open_upvalues.cursor();
-        cursor.move_next();
-
-        while let Some(obj) = cursor.get() {
-            Self::mark_object(obj);
-            cursor.move_next();
+        for val in &self.open_upvalues {
+            Self::mark_object(val);
         }
     }
 
@@ -1172,17 +1117,10 @@ impl<'a> VM<'a> {
     }
 
     fn sweep(&mut self) {
-        let mut cursor = self.objects.cursor_mut();
-        cursor.move_next();
-        while let Some(obj) = cursor.get() {
-            let marked = obj.marked.replace(false);
-            if !marked {
-                self.bytes_allocated -= std::mem::size_of_val(&obj.value);
-                cursor.remove();
-            } else {
-                cursor.move_next();
-            }
-        }
+        self.objects.retain(|val| !val.marked.get());
+        self.objects.iter().for_each(|val| {
+            val.marked.replace(false);
+        });
     }
 
     fn current_frame(&self) -> &CallFrame {

@@ -3,8 +3,6 @@ use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 
-use intrusive_collections::{intrusive_adapter, LinkedListLink};
-
 use crate::chunk::Instruction;
 use crate::object::{BoundMethod, Class, Closure, Instance, NativeFunction, UpvalueState};
 use crate::vm::error::RuntimeError;
@@ -71,8 +69,6 @@ impl Display for HeapValue {
 
 #[derive(Debug)]
 pub(super) struct Object {
-    pub(super) heap_link: LinkedListLink,
-    pub(super) upvalue_link: LinkedListLink,
     pub(super) value: HeapValue,
     pub(super) marked: Cell<bool>,
 }
@@ -83,14 +79,9 @@ impl PartialEq for Object {
     }
 }
 
-intrusive_adapter!(pub(super) HeapListAdapter = Rc<Object>: Object { heap_link: LinkedListLink });
-intrusive_adapter!(pub(super) UpvalueListAdapter = Rc<Object>: Object { upvalue_link: LinkedListLink });
-
 impl Object {
     pub(super) fn new(val: HeapValue) -> Rc<Object> {
         Rc::new(Object {
-            heap_link: LinkedListLink::new(),
-            upvalue_link: LinkedListLink::new(),
             value: val,
             marked: Cell::new(false),
         })
