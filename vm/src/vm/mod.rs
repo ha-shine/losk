@@ -1,4 +1,5 @@
 use ahash::RandomState;
+use intrusive_collections::LinkedList;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
@@ -35,7 +36,7 @@ pub struct VM<'a> {
     // pointer address will change since it's now moved to the heap. I need pointer to be stable
     // even after pushing, so Boxing is still necessary.
     #[allow(clippy::vec_box)]
-    objects: Vec<Box<Object>>,
+    objects: LinkedList<HeapAdapter>,
 
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
@@ -69,7 +70,7 @@ impl<'a> VM<'a> {
         // In the
         let mut vm = VM {
             stack: Vec::with_capacity(VM_DEFAULT_STACK_SIZE),
-            objects: Vec::new(),
+            objects: LinkedList::new(HeapAdapter::new()),
             frames: Vec::with_capacity(VM_MAX_CALLFRAME_COUNT),
             open_upvalues: Vec::new(),
             globals: HashMap::default(),
@@ -586,7 +587,7 @@ impl<'a> VM<'a> {
         match constant {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
-            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::Str(val.clone())),
+            ConstantValue::Str(val) => self.push(StackValue::Str(UnsafeRef::new(val))),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => panic!("Unreachable"),
         }
@@ -743,20 +744,15 @@ impl<'a> VM<'a> {
     // that time, the result could be gc-ed and the stack value will point to no where.
     // Care needs to be taken when adding values to heap.
     fn add(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
-        match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => {
-                Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
-            }
-            (StackValue::Obj(l), StackValue::Obj(r)) => match (&l.value, &r.value) {
-                (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
-                    let mut res = String::with_capacity(lstr.len() + rstr.len());
-                    res += lstr;
-                    res += rstr;
-                    Ok(StackOrHeap::Heap(HeapValue::Str(res)))
-                }
-                _ => Err("Expect both operands to be either numbers or strings."),
-            },
-            (_, _) => Err("Expect both operands to be either numbers or strings."),
+        if let (StackValue::Num(lhs), StackValue::Num(rhs)) = (&lhs, &rhs) {
+            Ok(StackOrHeap::Stack(StackValue::Num(lhs + rhs)))
+        } else if let (Some(lhs), Some(rhs)) = (lhs.as_string(), rhs.as_string()) {
+            let mut res = String::with_capacity(lhs.len() + rhs.len());
+            res += lhs;
+            res += rhs;
+            Ok(StackOrHeap::Heap(HeapValue::Str(res)))
+        } else {
+            Err("Expect both operands to be either numbers or strings.")
         }
     }
 
@@ -837,6 +833,9 @@ impl<'a> VM<'a> {
             }
             StackValue::Bool(val) => {
                 writeln!(self.stdout, "{}", val).unwrap();
+            }
+            StackValue::Str(val) => {
+                writeln!(self.stdout, "{}", &val as &String).unwrap();
             }
             StackValue::Obj(object) => {
                 writeln!(self.stdout, "{}", object.value).unwrap();
@@ -981,11 +980,11 @@ impl<'a> VM<'a> {
     // TODO: Stress GC if feature is enabled (and also logging GC)
     fn allocate_object(&mut self, val: HeapValue) -> StackValue {
         self.bytes_allocated += std::mem::size_of_val(&val);
-        self.objects.push(Object::new(val));
+        self.objects.push_front(Object::new(val));
 
         // Temporarily push the object on to stack so that it's reachable in the sweeping phase
         self.stack.push(StackValue::Obj(UnsafeRef::new(
-            self.objects.last().unwrap(),
+            self.objects.front().get().unwrap(),
         )));
 
         // Check if Gc should start mark-sweep
@@ -1034,12 +1033,12 @@ impl<'a> VM<'a> {
     }
 
     fn mark_object(obj: &mut Object) {
-        if obj.marked {
+        if obj.marked.get() {
             return;
         }
 
         // Mark the given object itself
-        obj.marked = true;
+        obj.marked.replace(true);
 
         match &obj.value {
             // Mark all the captured values if it's a closure
@@ -1092,8 +1091,17 @@ impl<'a> VM<'a> {
     }
 
     fn sweep(&mut self) {
-        self.objects.retain(|val| val.marked);
-        self.objects.iter_mut().for_each(|val| val.marked = false);
+        let mut cursor = self.objects.cursor_mut();
+        cursor.move_next();
+
+        while let Some(val) = cursor.get() {
+            if val.marked.get() {
+                val.marked.replace(false);
+                cursor.move_next();
+            } else {
+                cursor.remove();
+            }
+        }
     }
 
     fn current_frame(&self) -> &CallFrame {

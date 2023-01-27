@@ -1,5 +1,8 @@
+use std::cell::Cell;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+
+use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
 use crate::chunk::Instruction;
 use crate::object::{BoundMethod, Class, Closure, Instance, NativeFunction, UpvalueState};
@@ -12,6 +15,10 @@ pub(super) enum StackValue {
     Num(f64),
     Bool(bool),
 
+    // These are the strings that are always present in the function chunk in the form of constants.
+    // They will always be valid for the entirety of the program.
+    Str(UnsafeRef<String>),
+
     // This is not idiomatic, but for the sake of following the book this is fine for now.
     // Plus doing this as reference means there will be a sea of lifetime indicators in here.
     // This probably should be refactored out into its own RefCell-ish type, but this will suffice
@@ -23,14 +30,33 @@ pub(super) enum StackValue {
     Nil,
 }
 
+impl StackValue {
+    pub(super) fn as_string(&self) -> Option<&String> {
+        match self {
+            StackValue::Str(val) => Some(val),
+            StackValue::Obj(obj) => match &obj.value {
+                HeapValue::Str(val) => Some(val),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
 impl PartialEq for StackValue {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (StackValue::Num(lhs), StackValue::Num(rhs)) => lhs == rhs,
-            (StackValue::Bool(lhs), StackValue::Bool(rhs)) => lhs == rhs,
-            (StackValue::Obj(lhs), StackValue::Obj(rhs)) => lhs.value == rhs.value,
-            (StackValue::Nil, StackValue::Nil) => true,
-            _ => false,
+            (StackValue::Num(lhs), StackValue::Num(rhs)) => return lhs == rhs,
+            (StackValue::Bool(lhs), StackValue::Bool(rhs)) => return lhs == rhs,
+            (StackValue::Obj(lhs), StackValue::Obj(rhs)) => return lhs.value == rhs.value,
+            (StackValue::Nil, StackValue::Nil) => return true,
+            _ => {}
+        }
+
+        if let (Some(lhs), Some(rhs)) = (self.as_string(), other.as_string()) {
+            lhs == rhs
+        } else {
+            false
         }
     }
 }
@@ -40,6 +66,7 @@ impl Debug for StackValue {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
+            StackValue::Str(val) => write!(f, "{:?} -> {:?}", val, &val as &String),
             StackValue::Obj(val) => write!(f, "{:?} -> {:?}", val, val.value),
             StackValue::Nil => write!(f, "nil"),
         }
@@ -90,8 +117,11 @@ impl Display for HeapValue {
 #[derive(Debug)]
 pub(super) struct Object {
     pub(super) value: HeapValue,
-    pub(super) marked: bool,
+    pub(super) marked: Cell<bool>,
+    pub(super) heap: LinkedListLink,
 }
+
+intrusive_adapter!(pub(super) HeapAdapter = Box<Object>: Object { heap: LinkedListLink });
 
 impl PartialEq for Object {
     fn eq(&self, other: &Self) -> bool {
@@ -103,7 +133,8 @@ impl Object {
     pub(super) fn new(val: HeapValue) -> Box<Object> {
         Box::new(Object {
             value: val,
-            marked: false,
+            marked: Cell::new(false),
+            heap: LinkedListLink::new(),
         })
     }
 }
