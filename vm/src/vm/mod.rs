@@ -51,7 +51,7 @@ pub struct VM<'a> {
     // or heap values. The expression after the var declaration statement is pushed onto the stack
     // so it makes sense to map to a `StackValue`. Care should be taken so that the GC scans this
     // table for reachability too.
-    globals: HashMap<String, StackValue, RandomState>,
+    globals: HashMap<&'static str, StackValue, RandomState>,
 
     // The VM will write the output strings into this stdout
     stdout: &'a mut dyn Write,
@@ -80,8 +80,7 @@ impl<'a> VM<'a> {
         let clock = Object::new(HeapValue::NativeFunction(NativeFunction::new(
             "clock", 0, clock,
         )));
-        vm.globals
-            .insert("clock".to_string(), StackValue::Obj(clock.clone()));
+        vm.globals.insert("clock", StackValue::Obj(clock.clone()));
         vm.allocate_object(clock);
         vm
     }
@@ -187,7 +186,7 @@ impl<'a> VM<'a> {
                         .chunk
                         .get_constant(index as usize)
                     {
-                        Some(ConstantValue::Str(name)) => name,
+                        Some(ConstantValue::Str(name)) => name.as_str(),
                         _ => panic!("Unreachable"),
                     };
 
@@ -208,12 +207,12 @@ impl<'a> VM<'a> {
                         .chunk
                         .get_constant(index as usize)
                     {
-                        Some(ConstantValue::Str(val)) => val.clone(),
+                        Some(ConstantValue::Str(val)) => val.as_str(),
                         _ => panic!("Unreachable"),
                     };
 
                     let val = self.pop();
-                    self.globals.insert(name.clone(), val);
+                    self.globals.insert(name, val);
                 }
 
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
@@ -268,7 +267,7 @@ impl<'a> VM<'a> {
                         .get_constant(index as usize)
                         .unwrap()
                     {
-                        ConstantValue::Str(name) => name,
+                        ConstantValue::Str(name) => name.as_str(),
                         _ => panic!("Unreachable"),
                     };
 
@@ -306,7 +305,7 @@ impl<'a> VM<'a> {
                         .get_constant(index as usize)
                         .unwrap()
                     {
-                        ConstantValue::Str(name) => name.clone(),
+                        ConstantValue::Str(name) => name.as_str(),
                         _ => panic!("Unreachable"),
                     };
 
@@ -457,11 +456,11 @@ impl<'a> VM<'a> {
                         .chunk
                         .get_constant(idx as usize)
                     {
-                        Some(ConstantValue::Str(name)) => name,
+                        Some(ConstantValue::Str(name)) => name.as_str(),
                         _ => panic!("Unreachable"),
                     };
 
-                    let cls = Class::new(name.clone());
+                    let cls = Class::new(name);
                     self.allocate_and_push(HeapValue::Class(cls));
                 }
 
@@ -488,7 +487,7 @@ impl<'a> VM<'a> {
                         _ => panic!("Unreachable, expecting class below closure"),
                     };
 
-                    class.methods.borrow_mut().insert(name.clone(), body);
+                    class.methods.borrow_mut().insert(name, body);
                 }
 
                 // When invoke is called, the args must have been pushed onto the stack because of
@@ -557,27 +556,32 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::Inherit => {
-                    let sup = self.peek_stack(StackPosition::RevOffset(1));
-                    let sub = self.peek_stack(StackPosition::RevOffset(0));
-                    let (sup_obj, sub_obj) = match (sup, sub) {
-                        (StackValue::Obj(sup_obj), StackValue::Obj(sub_obj)) => (sup_obj, sub_obj),
-                        _ => return Err(self.error(format_args!("Superclass must be a class"))),
-                    };
+                    // For some reason, this needed to be scoped even though all the borrowed values
+                    // are dropped before the pop
+                    {
+                        let sup = self.peek_stack(StackPosition::RevOffset(1));
+                        let sub = self.peek_stack(StackPosition::RevOffset(0));
+                        let (sup_obj, sub_obj) = match (sup, sub) {
+                            (StackValue::Obj(sup_obj), StackValue::Obj(sub_obj)) => {
+                                (sup_obj, sub_obj)
+                            }
+                            _ => return Err(self.error(format_args!("Superclass must be a class"))),
+                        };
 
-                    let (sup_cls, sub_cls) = match (&sup_obj.value, &sub_obj.value) {
-                        (HeapValue::Class(sup_cls), HeapValue::Class(sub_cls)) => {
-                            (sup_cls, sub_cls)
+                        let (sup_cls, sub_cls) = match (&sup_obj.value, &sub_obj.value) {
+                            (HeapValue::Class(sup_cls), HeapValue::Class(sub_cls)) => {
+                                (sup_cls, sub_cls)
+                            }
+                            _ => return Err(self.error(format_args!("Superclass must be a class"))),
+                        };
+
+                        let mut sub_cls_methods = sub_cls.methods.borrow_mut();
+                        let sup_cls_methods = sup_cls.methods.borrow();
+
+                        for (key, value) in sup_cls_methods.iter() {
+                            sub_cls_methods.insert(key, value.clone());
                         }
-                        _ => return Err(self.error(format_args!("Superclass must be a class"))),
-                    };
-
-                    sub_cls.methods.borrow_mut().extend(
-                        sup_cls
-                            .methods
-                            .borrow()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone())),
-                    );
+                    }
 
                     // Pop the subclass
                     self.pop();
@@ -596,7 +600,7 @@ impl<'a> VM<'a> {
             .chunk
             .get_constant(constant.0 as usize)
         {
-            Some(ConstantValue::Str(name)) => name,
+            Some(ConstantValue::Str(name)) => name.as_str(),
             _ => panic!("Unreachable"),
         };
 
@@ -620,7 +624,7 @@ impl<'a> VM<'a> {
         match constant {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
-            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::Str(val.clone())),
+            ConstantValue::Str(val) => self.push(StackValue::Interned(val)),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => panic!("Unreachable"),
         }
@@ -776,20 +780,15 @@ impl<'a> VM<'a> {
     // that time, the result could be gc-ed and the stack value will point to no where.
     // Care needs to be taken when adding values to heap.
     fn add(&mut self, lhs: StackValue, rhs: StackValue) -> OpResult {
-        match (lhs, rhs) {
-            (StackValue::Num(l), StackValue::Num(r)) => {
-                Ok(StackOrHeap::Stack(StackValue::Num(l + r)))
-            }
-            (StackValue::Obj(l), StackValue::Obj(r)) => match (&l.value, &r.value) {
-                (HeapValue::Str(lstr), HeapValue::Str(rstr)) => {
-                    let mut res = String::with_capacity(lstr.len() + rstr.len());
-                    res += lstr;
-                    res += rstr;
-                    Ok(StackOrHeap::Heap(HeapValue::Str(res)))
-                }
-                _ => Err("Expect both operands to be either numbers or strings."),
-            },
-            (_, _) => Err("Expect both operands to be either numbers or strings."),
+        if let (Some(lhs), Some(rhs)) = (lhs.as_string(), rhs.as_string()) {
+            let mut res = String::with_capacity(lhs.len() + rhs.len());
+            res += lhs;
+            res += rhs;
+            Ok(StackOrHeap::Heap(HeapValue::Str(res)))
+        } else if let (StackValue::Num(lhs), StackValue::Num(rhs)) = (lhs, rhs) {
+            Ok(StackOrHeap::Stack(StackValue::Num(lhs + rhs)))
+        } else {
+            Err("Expect both operands to be either numbers or strings.")
         }
     }
 
@@ -869,6 +868,9 @@ impl<'a> VM<'a> {
                 writeln!(self.stdout, "{}", val).unwrap();
             }
             StackValue::Bool(val) => {
+                writeln!(self.stdout, "{}", val).unwrap();
+            }
+            StackValue::Interned(val) => {
                 writeln!(self.stdout, "{}", val).unwrap();
             }
             StackValue::Obj(object) => {

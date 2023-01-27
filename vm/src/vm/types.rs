@@ -10,10 +10,13 @@ use crate::object::{BoundMethod, Class, Closure, Instance, NativeFunction, Upval
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) enum StackValue {
     Num(f64),
     Bool(bool),
+
+    // Interned strings that are split out from the compiler
+    Interned(&'static str),
 
     // This is not idiomatic, but for the sake of following the book this is fine for now.
     // Plus doing this as reference means there will be a sea of lifetime indicators in here.
@@ -26,11 +29,43 @@ pub(super) enum StackValue {
     Nil,
 }
 
+impl StackValue {
+    pub(super) fn as_string(&self) -> Option<&str> {
+        match self {
+            StackValue::Interned(val) => Some(val),
+            StackValue::Obj(obj) => match &obj.value {
+                HeapValue::Str(val) => Some(val),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+}
+
+impl PartialEq for StackValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (StackValue::Num(lhs), StackValue::Num(rhs)) => return lhs == rhs,
+            (StackValue::Bool(lhs), StackValue::Bool(rhs)) => return lhs == rhs,
+            (StackValue::Obj(lhs), StackValue::Obj(rhs)) => return lhs.value == rhs.value,
+            (StackValue::Nil, StackValue::Nil) => return true,
+            _ => {}
+        }
+
+        if let (Some(lhs), Some(rhs)) = (self.as_string(), other.as_string()) {
+            lhs == rhs
+        } else {
+            false
+        }
+    }
+}
+
 impl Debug for StackValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
+            StackValue::Interned(val) => write!(f, "{}", val),
             StackValue::Obj(val) => write!(f, "{:?} -> {:?}", val, val.value),
             StackValue::Nil => write!(f, "nil"),
         }

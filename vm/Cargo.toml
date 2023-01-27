@@ -54,7 +54,3 @@ harness = false
 [[bench]]
 name = "zoo"
 harness = false
-
-[[bench]]
-name = "zoo_batch"
-harness = false

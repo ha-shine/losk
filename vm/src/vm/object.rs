@@ -156,12 +156,12 @@ pub(super) enum UpvalueState {
 
 #[derive(Debug, PartialEq)]
 pub(super) struct Class {
-    pub(super) name: String,
-    pub(super) methods: RefCell<HashMap<String, StackValue, RandomState>>,
+    pub(super) name: &'static str,
+    pub(super) methods: RefCell<HashMap<&'static str, StackValue, RandomState>>,
 }
 
 impl Class {
-    pub(super) fn new(name: String) -> Class {
+    pub(super) fn new(name: &'static str) -> Class {
         Class {
             name,
             methods: RefCell::new(HashMap::default()),
@@ -174,7 +174,7 @@ pub(super) struct Instance {
     pub(super) class: Rc<Object>,
 
     // RefCell is required here because I need to set the properties
-    pub(super) fields: RefCell<HashMap<String, StackValue, RandomState>>,
+    pub(super) fields: RefCell<HashMap<&'static str, StackValue, RandomState>>,
 }
 
 impl Instance {
