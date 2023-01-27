@@ -1,11 +1,10 @@
 use ahash::RandomState;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
 
 use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
 use crate::limits::COMP_UPVALUE_LIMIT;
+use crate::unsafe_ref::UnsafeRef;
 use crate::value::ConstantValue;
 use crate::vm::types::{HeapValue, Object};
 use crate::vm::StackValue;
@@ -139,7 +138,7 @@ pub(super) struct Closure {
     // I'm not sure if it's possible to create a cycle through upvalues because they are using Rc.
     // Theoretically, an upvalue could point another object which contains a field to upvalue, though
     // I haven't thought about the problem thoroughly.
-    pub(super) captured: Vec<Rc<Object>>,
+    pub(super) captured: Vec<UnsafeRef<Object>>,
 }
 
 impl PartialEq for Closure {
@@ -157,31 +156,31 @@ pub(super) enum UpvalueState {
 #[derive(Debug, PartialEq)]
 pub(super) struct Class {
     pub(super) name: String,
-    pub(super) methods: RefCell<HashMap<String, StackValue, RandomState>>,
+    pub(super) methods: HashMap<String, StackValue, RandomState>,
 }
 
 impl Class {
     pub(super) fn new(name: String) -> Class {
         Class {
             name,
-            methods: RefCell::new(HashMap::default()),
+            methods: HashMap::default(),
         }
     }
 }
 
 #[derive(Debug)]
 pub(super) struct Instance {
-    pub(super) class: Rc<Object>,
+    pub(super) class: UnsafeRef<Object>,
 
     // RefCell is required here because I need to set the properties
-    pub(super) fields: RefCell<HashMap<String, StackValue, RandomState>>,
+    pub(super) fields: HashMap<String, StackValue, RandomState>,
 }
 
 impl Instance {
-    pub(super) fn new(class: Rc<Object>) -> Instance {
+    pub(super) fn new(class: UnsafeRef<Object>) -> Instance {
         Instance {
             class,
-            fields: RefCell::new(HashMap::default()),
+            fields: HashMap::default(),
         }
     }
 
@@ -195,12 +194,12 @@ impl Instance {
 
 impl PartialEq for Instance {
     fn eq(&self, other: &Self) -> bool {
-        if self.class != other.class || self.fields.borrow().len() != other.fields.borrow().len() {
+        if !std::ptr::eq(&self.class, &other.class) || self.fields.len() != other.fields.len() {
             return false;
         }
 
-        for (k, v) in self.fields.borrow().iter() {
-            match other.fields.borrow().get(k) {
+        for (k, v) in self.fields.iter() {
+            match other.fields.get(k) {
                 Some(val) if v == val => { /* Values are equal, continue */ }
                 _ => return false,
             };
@@ -213,7 +212,7 @@ impl PartialEq for Instance {
 #[derive(Debug)]
 pub(super) struct BoundMethod {
     pub(super) receiver: StackValue,
-    pub(super) method: Rc<Object>,
+    pub(super) method: UnsafeRef<Object>,
 }
 
 impl PartialEq for BoundMethod {
@@ -223,7 +222,7 @@ impl PartialEq for BoundMethod {
 }
 
 impl BoundMethod {
-    pub(super) fn new(receiver: StackValue, method: Rc<Object>) -> Self {
+    pub(super) fn new(receiver: StackValue, method: UnsafeRef<Object>) -> Self {
         BoundMethod { receiver, method }
     }
 

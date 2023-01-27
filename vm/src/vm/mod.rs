@@ -1,9 +1,7 @@
 use ahash::RandomState;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
-use std::rc::Rc;
 
 use native::clock;
 
@@ -12,6 +10,7 @@ use crate::limits::{
     GC_HEAP_GROW_FACTOR, VM_DEFAULT_STACK_SIZE, VM_MAX_CALLFRAME_COUNT, VM_STACK_TRACE_LIMIT,
 };
 use crate::object::*;
+use crate::unsafe_ref::UnsafeRef;
 use crate::value::ConstantValue;
 use crate::vm::error::*;
 use crate::vm::types::*;
@@ -31,7 +30,12 @@ pub struct VM<'a> {
     // Note that the heap objects need to be mutable because of two reasons -
     //   - Garbage collector will mark the objects
     //   - Closure's captured values will be updated with `SetUpvalue` instruction
-    objects: Vec<Rc<Object>>,
+    //
+    // Regarding clippy's vec box issue, if I allocate an object and push it to the vector, the
+    // pointer address will change since it's now moved to the heap. I need pointer to be stable
+    // even after pushing, so Boxing is still necessary.
+    #[allow(clippy::vec_box)]
+    objects: Vec<Box<Object>>,
 
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
@@ -41,7 +45,7 @@ pub struct VM<'a> {
     // List of upvalues that have not been closed. They are objects here because there's not a good
     // way to point directly to the UpvalueObject unless I go the route of double indirection
     // by wrapping the UpvalueObject itself in an Rc.
-    open_upvalues: Vec<Rc<Object>>,
+    open_upvalues: Vec<UnsafeRef<Object>>,
 
     // Globals are used to map between a variable defined on the global scope to it's corresponding
     // value. The values are of type `StackValue` because the globals can be mapped to either stack
@@ -74,12 +78,12 @@ impl<'a> VM<'a> {
             next_gc: 1024 * 1024,
         };
 
-        let clock = Object::new(HeapValue::NativeFunction(NativeFunction::new(
+        vm.allocate_and_push(HeapValue::NativeFunction(NativeFunction::new(
             "clock", 0, clock,
         )));
+
         vm.globals
-            .insert("clock".to_string(), StackValue::Obj(clock.clone()));
-        vm.allocate_object(clock);
+            .insert("clock".to_string(), vm.stack.pop().unwrap());
         vm
     }
 
@@ -104,7 +108,7 @@ impl<'a> VM<'a> {
         // upvalue object and add it to the upvalue list. This can't be done in this because
         // the `capture_upvalue` do other heavy-lifting stuffs like moving the cursor to correct place.
         enum UpvalueOrStackPosition {
-            Upvalue(Rc<Object>),
+            Upvalue(UnsafeRef<Object>),
             Position(StackPosition),
         }
 
@@ -124,6 +128,10 @@ impl<'a> VM<'a> {
         for value in temp {
             match value {
                 UpvalueOrStackPosition::Upvalue(val) => captured.push(val),
+
+                // Open upvalues are pushed onto open upvalue list in the `capture_upvalue`,
+                // so the temporary values here are safe from GC even though the new call frame has
+                // not been pushed onto stack yet, and the upvalues here are not reachable from callframe.
                 UpvalueOrStackPosition::Position(pos) => captured.push(self.capture_upvalue(pos)),
             }
         }
@@ -178,12 +186,7 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::GetGlobal(Constant(index)) => {
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(index as usize)
-                    {
+                    let name = match self.current_frame().function().chunk.get_constant(index) {
                         Some(ConstantValue::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -199,12 +202,7 @@ impl<'a> VM<'a> {
                 Instruction::DefineGlobal(Constant(index)) => {
                     // The global name is stored as a constant value in the constant pool, read
                     // from the pool to get the name.
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(index as usize)
-                    {
+                    let name = match self.current_frame().function().chunk.get_constant(index) {
                         Some(ConstantValue::Str(val)) => val.clone(),
                         _ => panic!("Unreachable"),
                     };
@@ -262,14 +260,14 @@ impl<'a> VM<'a> {
                         .current_frame()
                         .function()
                         .chunk
-                        .get_constant(index as usize)
+                        .get_constant(index)
                         .unwrap()
                     {
                         ConstantValue::Str(name) => name,
                         _ => panic!("Unreachable"),
                     };
 
-                    match instance.fields.borrow().get(field) {
+                    match instance.fields.get(field) {
                         Some(val) => {
                             let val = val.clone();
                             self.push(val);
@@ -291,27 +289,23 @@ impl<'a> VM<'a> {
                         _ => return Err(self.error(format_args!("Only instances have properties"))),
                     };
 
-                    let instance = match &obj.value {
-                        HeapValue::Instance(instance) => instance,
-                        _ => return Err(self.error(format_args!("Only instances have properties"))),
-                    };
+                    if let HeapValue::Instance(instance) = &mut obj.borrow_mut().value {
+                        let field = match self
+                            .current_frame()
+                            .function()
+                            .chunk
+                            .get_constant(index)
+                            .unwrap()
+                        {
+                            ConstantValue::Str(name) => name.clone(),
+                            _ => panic!("Unreachable"),
+                        };
 
-                    let field = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(index as usize)
-                        .unwrap()
-                    {
-                        ConstantValue::Str(name) => name.clone(),
-                        _ => panic!("Unreachable"),
-                    };
-
-                    instance
-                        .fields
-                        .borrow_mut()
-                        .insert(field, value_slot.clone());
-                    self.push(value_slot);
+                        instance.fields.insert(field, value_slot.clone());
+                        self.push(value_slot);
+                    } else {
+                        return Err(self.error(format_args!("Only instances have properties")));
+                    }
                 }
 
                 Instruction::GetSuper(Constant(index)) => {
@@ -319,7 +313,7 @@ impl<'a> VM<'a> {
                         .current_frame()
                         .function()
                         .chunk
-                        .get_constant(index as usize)
+                        .get_constant(index)
                         .unwrap()
                     {
                         ConstantValue::Str(name) => name.clone(),
@@ -408,11 +402,7 @@ impl<'a> VM<'a> {
                 // compilation a bit more complicated and might not be a good thing for performance
                 // due to cache locality (or lack thereof) between the two containers.
                 Instruction::Closure(Constant(idx)) => {
-                    let val = self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(idx as usize);
+                    let val = self.current_frame().function().chunk.get_constant(idx);
 
                     if let Some(ConstantValue::Fun(fun)) = val {
                         let closure = self.make_closure(fun);
@@ -421,19 +411,21 @@ impl<'a> VM<'a> {
                         panic!("Unreachable")
                     }
                 }
+
                 Instruction::CloseUpvalue => {
                     self.close_upvalues(self.stack.len() - 1);
                     self.pop();
                 }
+
                 Instruction::Return => {
                     // Ensure the current frame's closure is dropped after returning.
                     let frame = self.frames.pop().unwrap();
 
                     // The return value of a function should be on top of the stack, so it'll be
                     // pushed onto the top of the stack.
-                    let result = self.pop();
                     let slots = frame.slots;
                     self.close_upvalues(slots);
+                    let result = self.pop();
 
                     if self.frames.is_empty() {
                         self.pop();
@@ -448,12 +440,7 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::Class(Constant(idx)) => {
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(idx as usize)
-                    {
+                    let name = match self.current_frame().function().chunk.get_constant(idx) {
                         Some(ConstantValue::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -464,12 +451,7 @@ impl<'a> VM<'a> {
 
                 Instruction::Method(Constant(idx)) => {
                     let body = self.pop();
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(idx as usize)
-                    {
+                    let name = match self.current_frame().function().chunk.get_constant(idx) {
                         Some(ConstantValue::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -480,12 +462,12 @@ impl<'a> VM<'a> {
                         _ => panic!("Unreachable, expecting class below closure"),
                     };
 
-                    let class = match &obj.value {
+                    let class = match &mut obj.borrow_mut().value {
                         HeapValue::Class(class) => class,
                         _ => panic!("Unreachable, expecting class below closure"),
                     };
 
-                    class.methods.borrow_mut().insert(name.clone(), body);
+                    class.methods.insert(name.clone(), body);
                 }
 
                 // When invoke is called, the args must have been pushed onto the stack because of
@@ -494,12 +476,7 @@ impl<'a> VM<'a> {
                 // before the `.` syntax. That is the receiver. In that case, I don't need to
                 // create a separate bound method but instead invoke the method from class directly.
                 Instruction::Invoke(Invoke { name, args }) => {
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(name.0 as usize)
-                    {
+                    let name = match self.current_frame().function().chunk.get_constant(name.0) {
                         Some(ConstantValue::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -519,12 +496,7 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::SuperInvoke(Invoke { name, args }) => {
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(name.0 as usize)
-                    {
+                    let name = match self.current_frame().function().chunk.get_constant(name.0) {
                         Some(ConstantValue::Str(name)) => name,
                         _ => panic!("Unreachable"),
                     };
@@ -561,20 +533,17 @@ impl<'a> VM<'a> {
                         _ => return Err(self.error(format_args!("Superclass must be a class"))),
                     };
 
-                    let (sup_cls, sub_cls) = match (&sup_obj.value, &sub_obj.value) {
+                    let (sup_cls, sub_cls) = match (&sup_obj.value, &mut sub_obj.borrow_mut().value)
+                    {
                         (HeapValue::Class(sup_cls), HeapValue::Class(sub_cls)) => {
                             (sup_cls, sub_cls)
                         }
                         _ => return Err(self.error(format_args!("Superclass must be a class"))),
                     };
 
-                    sub_cls.methods.borrow_mut().extend(
-                        sup_cls
-                            .methods
-                            .borrow()
-                            .iter()
-                            .map(|(k, v)| (k.clone(), v.clone())),
-                    );
+                    sub_cls
+                        .methods
+                        .extend(sup_cls.methods.iter().map(|(k, v)| (k.clone(), v.clone())));
 
                     // Pop the subclass
                     self.pop();
@@ -591,7 +560,7 @@ impl<'a> VM<'a> {
             .current_frame()
             .function()
             .chunk
-            .get_constant(constant.0 as usize)
+            .get_constant(constant.0)
         {
             Some(ConstantValue::Str(name)) => name,
             _ => panic!("Unreachable"),
@@ -611,7 +580,7 @@ impl<'a> VM<'a> {
             .current_frame()
             .function()
             .chunk
-            .get_constant(con.0 as usize)
+            .get_constant(con.0)
             .ok_or_else(|| self.error(format_args!("Unknown constant")))?;
 
         match constant {
@@ -664,9 +633,9 @@ impl<'a> VM<'a> {
                     Ok(())
                 }
 
-                HeapValue::Class(_) => {
-                    let instance = Instance::new(obj.clone());
-                    let initializer = instance.class().methods.borrow().get("init").cloned();
+                HeapValue::Class(cls) => {
+                    let instance = Instance::new(UnsafeRef::clone(&obj));
+                    let initializer = cls.methods.get("init").cloned();
                     self.allocate_and_push(HeapValue::Instance(instance));
 
                     // The function is at -count position, replace that with the instance
@@ -703,7 +672,7 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn call_closure(&mut self, closure: Rc<Object>, args: usize) -> VmResult<()> {
+    fn call_closure(&mut self, closure: UnsafeRef<Object>, args: usize) -> VmResult<()> {
         if let HeapValue::Closure(closure) = &closure.value {
             if closure.fun.arity != args {
                 return Err(self.error(format_args!(
@@ -730,14 +699,15 @@ impl<'a> VM<'a> {
         name: &str,
         args: usize,
     ) -> VmResult<()> {
-        if let Some(field) = instance.fields.borrow().get(name).cloned() {
+        // Wait, instance is no longer reachable from stack here. Because the instance's field is
+        // put onto the place where the instance should be.
+        if let Some(field) = instance.fields.get(name).cloned() {
             self.put_stack(StackPosition::RevOffset(args), field.clone());
             self.execute_call(field, args)?;
             return Ok(());
         }
 
-        let methods = class.methods.borrow();
-        match methods.get(name).cloned() {
+        match class.methods.get(name).cloned() {
             Some(method) => self.execute_call(method, args),
             None => Err(self.error(format_args!("Undefined property {}.", name))),
         }
@@ -877,28 +847,28 @@ impl<'a> VM<'a> {
         };
     }
 
-    fn capture_upvalue(&mut self, pos: StackPosition) -> Rc<Object> {
+    fn capture_upvalue(&mut self, pos: StackPosition) -> UnsafeRef<Object> {
         let index = self.stack_pos_to_index(pos);
 
         for open in &self.open_upvalues {
             match &open.value {
-                HeapValue::Upvalue(val) => match &*val.borrow() {
-                    UpvalueState::Open(pos) => {
-                        let curr = self.stack_pos_to_index(*pos);
-                        if curr == index {
-                            return open.clone();
-                        }
+                HeapValue::Upvalue(UpvalueState::Open(pos)) => {
+                    let curr = self.stack_pos_to_index(*pos);
+                    if curr == index {
+                        return open.clone();
                     }
-                    _ => continue,
-                },
+                }
                 _ => panic!("Found non-upvalue in open upvalue list"),
             }
         }
 
-        let obj = Object::new(HeapValue::Upvalue(RefCell::new(UpvalueState::Open(pos))));
-        self.open_upvalues.push(obj.clone());
-        self.allocate_object(obj.clone());
-        obj
+        self.allocate_and_push(HeapValue::Upvalue(UpvalueState::Open(pos)));
+        if let StackValue::Obj(obj) = self.pop() {
+            self.open_upvalues.push(obj.clone());
+            obj
+        } else {
+            panic!("Unreachable")
+        }
     }
 
     // Close all the upvalues that are above the stack index given in the argument.
@@ -910,18 +880,11 @@ impl<'a> VM<'a> {
         self.open_upvalues = upvalues
             .into_iter()
             .filter(|val| match &val.value {
-                HeapValue::Upvalue(upvalue) => {
-                    let curr = if let UpvalueState::Open(StackPosition::Index(curr)) =
-                        &*upvalue.borrow()
-                    {
-                        *curr
-                    } else {
-                        panic!("Found weird value in open upvalue list");
-                    };
-
+                HeapValue::Upvalue(UpvalueState::Open(pos)) => {
+                    let curr = self.stack_pos_to_index(*pos);
                     if curr >= last_index {
                         let item = self.stack[curr].clone();
-                        *upvalue.borrow_mut() = UpvalueState::Closed(item);
+                        val.borrow_mut().value = HeapValue::Upvalue(UpvalueState::Closed(item));
                         false
                     } else {
                         true
@@ -935,9 +898,9 @@ impl<'a> VM<'a> {
     // This will return the stack object the given upvalue object is pointing to, which means
     // the original stack value if it's an open upvalue, or the closed value itself.
     // The method assumes the given object is an upvalue, and panic if not.
-    fn get_upvalue(&self, obj: &Rc<Object>) -> StackValue {
+    fn get_upvalue(&self, obj: &UnsafeRef<Object>) -> StackValue {
         match &obj.value {
-            HeapValue::Upvalue(val) => match &*val.borrow() {
+            HeapValue::Upvalue(val) => match val {
                 UpvalueState::Open(pos) => self.peek_stack(*pos).clone(),
                 UpvalueState::Closed(val) => val.clone(),
             },
@@ -945,15 +908,15 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn set_upvalue(&mut self, obj: Rc<Object>, value: StackValue) {
+    fn set_upvalue(&mut self, obj: UnsafeRef<Object>, value: StackValue) {
         match &obj.value {
             HeapValue::Upvalue(val) => {
-                if let UpvalueState::Open(pos) = &*val.borrow() {
+                if let UpvalueState::Open(pos) = val {
                     self.put_stack(*pos, value);
                     return;
                 }
 
-                *val.borrow_mut() = UpvalueState::Closed(value);
+                obj.borrow_mut().value = HeapValue::Upvalue(UpvalueState::Closed(value));
             }
             _ => panic!("Object is not an upvalue"),
         };
@@ -965,7 +928,7 @@ impl<'a> VM<'a> {
         class: &Class,
         name: &str,
     ) -> VmResult<BoundMethod> {
-        let method = match class.methods.borrow().get(name) {
+        let method = match class.methods.get(name) {
             Some(method) => method.clone(),
             None => return Err(self.error(format_args!("Undefined property '{}'.", name))),
         };
@@ -975,8 +938,6 @@ impl<'a> VM<'a> {
         } else {
             panic!("Unreachable")
         }
-
-        // TODO: Popping, pushing could also have been moved here instead
     }
 
     fn peek_stack(&self, pos: StackPosition) -> &StackValue {
@@ -1011,18 +972,21 @@ impl<'a> VM<'a> {
     }
 
     fn allocate_and_push(&mut self, val: HeapValue) {
-        let obj = Object::new(val);
-        let sval = StackValue::Obj(obj.clone());
-        self.stack.push(sval);
-
-        self.allocate_object(obj);
+        let sval = self.allocate_object(val);
+        self.stack.push(sval)
     }
 
     // This is where the GC will make the decision on doing GC which means be careful using this
     // method (i.e ensure the object being passed to here is already reachable from stack).
     // TODO: Stress GC if feature is enabled (and also logging GC)
-    fn allocate_object(&mut self, val: Rc<Object>) {
-        self.bytes_allocated += std::mem::size_of_val(&val.value);
+    fn allocate_object(&mut self, val: HeapValue) -> StackValue {
+        self.bytes_allocated += std::mem::size_of_val(&val);
+        self.objects.push(Object::new(val));
+
+        // Temporarily push the object on to stack so that it's reachable in the sweeping phase
+        self.stack.push(StackValue::Obj(UnsafeRef::new(
+            self.objects.last().unwrap(),
+        )));
 
         // Check if Gc should start mark-sweep
         if self.bytes_allocated > self.next_gc {
@@ -1032,7 +996,7 @@ impl<'a> VM<'a> {
             self.next_gc = self.bytes_allocated * GC_HEAP_GROW_FACTOR;
         }
 
-        self.objects.push(val);
+        self.stack.pop().unwrap()
     }
 
     // In the text book, the marking phase is separated into two parts -
@@ -1047,41 +1011,41 @@ impl<'a> VM<'a> {
         // Mark the objects from the stack recursively
         for val in &self.stack {
             if let StackValue::Obj(obj) = val {
-                Self::mark_object(obj);
+                Self::mark_object(obj.borrow_mut());
             }
         }
 
         // Mark the global table
         for val in self.globals.values() {
             if let StackValue::Obj(obj) = val {
-                Self::mark_object(obj);
+                Self::mark_object(obj.borrow_mut());
             }
         }
 
         // Walk through the call frames
         for frame in &self.frames {
-            Self::mark_object(&frame.fun);
+            Self::mark_object(frame.fun.borrow_mut());
         }
 
         // Also walk through the open upvalue list
         for val in &self.open_upvalues {
-            Self::mark_object(val);
+            Self::mark_object(val.borrow_mut());
         }
     }
 
-    fn mark_object(obj: &Object) {
-        if obj.marked.get() {
+    fn mark_object(obj: &mut Object) {
+        if obj.marked {
             return;
         }
 
         // Mark the given object itself
-        obj.marked.replace(true);
+        obj.marked = true;
 
         match &obj.value {
             // Mark all the captured values if it's a closure
             HeapValue::Closure(closure) => {
                 for captured in &closure.captured {
-                    Self::mark_object(captured);
+                    Self::mark_object(captured.borrow_mut());
                 }
             }
 
@@ -1089,38 +1053,47 @@ impl<'a> VM<'a> {
             // mark them recursively too. I don't have to mark open value because they would have
             // been marked while walking through the stack
             HeapValue::Upvalue(val) => {
-                if let UpvalueState::Closed(StackValue::Obj(upvalue)) = &*val.borrow() {
-                    Self::mark_object(upvalue);
+                if let UpvalueState::Closed(StackValue::Obj(upvalue)) = val {
+                    Self::mark_object(upvalue.borrow_mut());
                 }
             }
 
             HeapValue::Instance(ins) => {
-                Self::mark_object(&ins.class);
+                Self::mark_object(ins.class.borrow_mut());
 
-                for field in ins.fields.borrow().values() {
+                for field in ins.fields.values() {
+                    // Fields can contain other stack values that don't require heap allocations
                     if let StackValue::Obj(obj) = field {
-                        Self::mark_object(obj);
+                        Self::mark_object(obj.borrow_mut())
                     }
                 }
             }
 
             HeapValue::BoundMethod(method) => {
-                Self::mark_object(&method.method);
-                if let StackValue::Obj(obj) = &method.receiver {
-                    Self::mark_object(obj);
+                Self::mark_object(method.method.borrow_mut());
+                match &method.receiver {
+                    StackValue::Obj(obj) => Self::mark_object(obj.borrow_mut()),
+                    _ => panic!("Unreachable"),
+                }
+            }
+
+            HeapValue::Class(cls) => {
+                for method in cls.methods.values() {
+                    match method {
+                        StackValue::Obj(obj) => Self::mark_object(obj.borrow_mut()),
+                        _ => panic!("Found StackValue in method"),
+                    }
                 }
             }
 
             // These don't need recursion, they contains no fields
-            HeapValue::Str(_) | HeapValue::NativeFunction(_) | HeapValue::Class(_) => {}
+            HeapValue::Str(_) | HeapValue::NativeFunction(_) => {}
         }
     }
 
     fn sweep(&mut self) {
-        self.objects.retain(|val| !val.marked.get());
-        self.objects.iter().for_each(|val| {
-            val.marked.replace(false);
-        });
+        self.objects.retain(|val| val.marked);
+        self.objects.iter_mut().for_each(|val| val.marked = false);
     }
 
     fn current_frame(&self) -> &CallFrame {

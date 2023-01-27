@@ -61,7 +61,7 @@ pub(crate) enum StackPosition {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) struct Constant(pub(crate) u8);
+pub(crate) struct Constant(pub(crate) usize);
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct JumpDist(pub(crate) usize);
@@ -111,7 +111,7 @@ impl Chunk {
 
         self.constants.push(value);
 
-        let index = (self.constants.len() as u8) - 1;
+        let index = self.constants.len() - 1;
         Ok(Constant(index))
     }
 

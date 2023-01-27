@@ -1,14 +1,13 @@
-use std::cell::{Cell, RefCell};
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
-use std::rc::Rc;
 
 use crate::chunk::Instruction;
 use crate::object::{BoundMethod, Class, Closure, Instance, NativeFunction, UpvalueState};
+use crate::unsafe_ref::UnsafeRef;
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone)]
 pub(super) enum StackValue {
     Num(f64),
     Bool(bool),
@@ -20,8 +19,20 @@ pub(super) enum StackValue {
     // They can be strong pointers for the time being because the stack is a vector and values
     // will be dropped according as long as they go out of scope. It will probably not be possible
     // to create a cycle with classes since class will own the weak pointers instead.
-    Obj(Rc<Object>),
+    Obj(UnsafeRef<Object>),
     Nil,
+}
+
+impl PartialEq for StackValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (StackValue::Num(lhs), StackValue::Num(rhs)) => lhs == rhs,
+            (StackValue::Bool(lhs), StackValue::Bool(rhs)) => lhs == rhs,
+            (StackValue::Obj(lhs), StackValue::Obj(rhs)) => lhs.value == rhs.value,
+            (StackValue::Nil, StackValue::Nil) => true,
+            _ => false,
+        }
+    }
 }
 
 impl Debug for StackValue {
@@ -35,7 +46,7 @@ impl Debug for StackValue {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(super) enum HeapValue {
     Str(String),
     Closure(Closure),
@@ -46,11 +57,20 @@ pub(super) enum HeapValue {
     // when closed, the value needs to be updated with captured upvalue.
     // This could be replaced with a Cell if I start using pointers in StackValue and make them
     // Copy.
-    Upvalue(RefCell<UpvalueState>),
+    Upvalue(UpvalueState),
 
     Class(Class),
     Instance(Instance),
     BoundMethod(BoundMethod),
+}
+
+impl PartialEq for HeapValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (HeapValue::Str(lhs), HeapValue::Str(rhs)) => lhs == rhs,
+            (lhs, rhs) => std::ptr::eq(lhs, rhs),
+        }
+    }
 }
 
 impl Display for HeapValue {
@@ -70,7 +90,7 @@ impl Display for HeapValue {
 #[derive(Debug)]
 pub(super) struct Object {
     pub(super) value: HeapValue,
-    pub(super) marked: Cell<bool>,
+    pub(super) marked: bool,
 }
 
 impl PartialEq for Object {
@@ -80,10 +100,10 @@ impl PartialEq for Object {
 }
 
 impl Object {
-    pub(super) fn new(val: HeapValue) -> Rc<Object> {
-        Rc::new(Object {
+    pub(super) fn new(val: HeapValue) -> Box<Object> {
+        Box::new(Object {
             value: val,
-            marked: Cell::new(false),
+            marked: false,
         })
     }
 }
@@ -94,7 +114,7 @@ impl Object {
 // Copy-derived to initialise an array of frames with default values when the VM starts.
 #[derive(Clone)]
 pub(super) struct CallFrame {
-    pub(super) fun: Rc<Object>,
+    pub(super) fun: UnsafeRef<Object>,
 
     pub(super) ip: usize,
     pub(super) slots: usize,
@@ -121,16 +141,6 @@ impl CallFrame {
 
     pub(super) fn loop_(&mut self, offset: usize) {
         self.ip -= offset;
-    }
-}
-
-impl Default for CallFrame {
-    fn default() -> Self {
-        CallFrame {
-            fun: Object::new(HeapValue::Str(String::new())),
-            ip: 0,
-            slots: 0,
-        }
     }
 }
 
