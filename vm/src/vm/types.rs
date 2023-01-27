@@ -17,7 +17,7 @@ pub(super) enum StackValue {
 
     // These are the strings that are always present in the function chunk in the form of constants.
     // They will always be valid for the entirety of the program.
-    Str(UnsafeRef<String>),
+    Str(&'static str),
 
     // This is not idiomatic, but for the sake of following the book this is fine for now.
     // Plus doing this as reference means there will be a sea of lifetime indicators in here.
@@ -31,7 +31,7 @@ pub(super) enum StackValue {
 }
 
 impl StackValue {
-    pub(super) fn as_string(&self) -> Option<&String> {
+    pub(super) fn as_string(&self) -> Option<&str> {
         match self {
             StackValue::Str(val) => Some(val),
             StackValue::Obj(obj) => match &obj.value {
@@ -66,7 +66,7 @@ impl Debug for StackValue {
         match self {
             StackValue::Num(val) => write!(f, "{}", val),
             StackValue::Bool(val) => write!(f, "{}", val),
-            StackValue::Str(val) => write!(f, "{:?} -> {:?}", val, &val as &String),
+            StackValue::Str(val) => write!(f, "{:?} -> {:?}", val, val),
             StackValue::Obj(val) => write!(f, "{:?} -> {:?}", val, val.value),
             StackValue::Nil => write!(f, "nil"),
         }

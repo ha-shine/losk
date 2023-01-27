@@ -31,7 +31,7 @@ impl From<NativeValue> for ConstantValue {
 }
 
 pub(super) struct NativeFunction {
-    pub(super) name: String,
+    pub(super) name: &'static str,
     pub(super) arity: usize,
     pub(super) fun: NativeFn,
 }
@@ -70,9 +70,9 @@ pub struct Function {
 }
 
 impl Function {
-    pub(crate) fn new(name: &str, arity: usize) -> Self {
+    pub(crate) fn new(name: String, arity: usize) -> Self {
         Function {
-            name: name.to_string(),
+            name,
             arity,
             chunk: Chunk::new(),
             upvalues: [Default::default(); COMP_UPVALUE_LIMIT],
@@ -101,15 +101,11 @@ impl Function {
 
 impl NativeFunction {
     pub(crate) fn new(
-        name: &str,
+        name: &'static str,
         arity: usize,
         fun: fn(&[StackValue]) -> Option<NativeValue>,
     ) -> Self {
-        NativeFunction {
-            name: name.to_string(),
-            arity,
-            fun,
-        }
+        NativeFunction { name, arity, fun }
     }
 }
 
@@ -155,12 +151,12 @@ pub(super) enum UpvalueState {
 
 #[derive(Debug, PartialEq)]
 pub(super) struct Class {
-    pub(super) name: String,
-    pub(super) methods: HashMap<String, StackValue, RandomState>,
+    pub(super) name: &'static str,
+    pub(super) methods: HashMap<&'static str, StackValue, RandomState>,
 }
 
 impl Class {
-    pub(super) fn new(name: String) -> Class {
+    pub(super) fn new(name: &'static str) -> Class {
         Class {
             name,
             methods: HashMap::default(),
@@ -173,7 +169,7 @@ pub(super) struct Instance {
     pub(super) class: UnsafeRef<Object>,
 
     // RefCell is required here because I need to set the properties
-    pub(super) fields: HashMap<String, StackValue, RandomState>,
+    pub(super) fields: HashMap<&'static str, StackValue, RandomState>,
 }
 
 impl Instance {

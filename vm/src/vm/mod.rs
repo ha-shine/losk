@@ -53,7 +53,7 @@ pub struct VM<'a> {
     // or heap values. The expression after the var declaration statement is pushed onto the stack
     // so it makes sense to map to a `StackValue`. Care should be taken so that the GC scans this
     // table for reachability too.
-    globals: HashMap<String, StackValue, RandomState>,
+    globals: HashMap<&'static str, StackValue, RandomState>,
 
     // The VM will write the output strings into this stdout
     stdout: &'a mut dyn Write,
@@ -83,8 +83,7 @@ impl<'a> VM<'a> {
             "clock", 0, clock,
         )));
 
-        vm.globals
-            .insert("clock".to_string(), vm.stack.pop().unwrap());
+        vm.globals.insert("clock", vm.stack.pop().unwrap());
         vm
     }
 
@@ -186,11 +185,8 @@ impl<'a> VM<'a> {
                     self.pop();
                 }
 
-                Instruction::GetGlobal(Constant(index)) => {
-                    let name = match self.current_frame().function().chunk.get_constant(index) {
-                        Some(ConstantValue::Str(name)) => name,
-                        _ => panic!("Unreachable"),
-                    };
+                Instruction::GetGlobal(constant) => {
+                    let name = self.get_constant(constant);
 
                     match self.globals.get(name) {
                         Some(sval) => self.push(sval.clone()),
@@ -200,16 +196,13 @@ impl<'a> VM<'a> {
                     }
                 }
 
-                Instruction::DefineGlobal(Constant(index)) => {
+                Instruction::DefineGlobal(constant) => {
                     // The global name is stored as a constant value in the constant pool, read
                     // from the pool to get the name.
-                    let name = match self.current_frame().function().chunk.get_constant(index) {
-                        Some(ConstantValue::Str(val)) => val.clone(),
-                        _ => panic!("Unreachable"),
-                    };
+                    let name = self.get_constant(constant);
 
                     let val = self.pop();
-                    self.globals.insert(name.clone(), val);
+                    self.globals.insert(name, val);
                 }
 
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
@@ -243,7 +236,7 @@ impl<'a> VM<'a> {
                     }
                 }
 
-                Instruction::GetProperty(Constant(index)) => {
+                Instruction::GetProperty(constant) => {
                     let instance_slot = self.pop();
 
                     let obj = match instance_slot {
@@ -257,16 +250,7 @@ impl<'a> VM<'a> {
                         _ => return Err(self.error(format_args!("Only instances have properties"))),
                     };
 
-                    let field = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(index)
-                        .unwrap()
-                    {
-                        ConstantValue::Str(name) => name,
-                        _ => panic!("Unreachable"),
-                    };
+                    let field = self.get_constant(constant);
 
                     match instance.fields.get(field) {
                         Some(val) => {
@@ -281,7 +265,7 @@ impl<'a> VM<'a> {
                     };
                 }
 
-                Instruction::SetProperty(Constant(index)) => {
+                Instruction::SetProperty(constant) => {
                     let value_slot = self.pop();
                     let instance_slot = self.pop();
 
@@ -291,16 +275,7 @@ impl<'a> VM<'a> {
                     };
 
                     if let HeapValue::Instance(instance) = &mut obj.borrow_mut().value {
-                        let field = match self
-                            .current_frame()
-                            .function()
-                            .chunk
-                            .get_constant(index)
-                            .unwrap()
-                        {
-                            ConstantValue::Str(name) => name.clone(),
-                            _ => panic!("Unreachable"),
-                        };
+                        let field = self.get_constant(constant);
 
                         instance.fields.insert(field, value_slot.clone());
                         self.push(value_slot);
@@ -309,17 +284,8 @@ impl<'a> VM<'a> {
                     }
                 }
 
-                Instruction::GetSuper(Constant(index)) => {
-                    let name = match self
-                        .current_frame()
-                        .function()
-                        .chunk
-                        .get_constant(index)
-                        .unwrap()
-                    {
-                        ConstantValue::Str(name) => name.clone(),
-                        _ => panic!("Unreachable"),
-                    };
+                Instruction::GetSuper(constant) => {
+                    let name = self.get_constant(constant);
 
                     // On stack -> [this, super]
                     let superclass_slot = self.pop();
@@ -333,7 +299,7 @@ impl<'a> VM<'a> {
                     };
 
                     let instance = self.pop();
-                    let bound_method = self.bind_method(instance, superclass, &name)?;
+                    let bound_method = self.bind_method(instance, superclass, name)?;
                     self.allocate_and_push(HeapValue::BoundMethod(bound_method));
                 }
 
@@ -442,11 +408,11 @@ impl<'a> VM<'a> {
 
                 Instruction::Class(Constant(idx)) => {
                     let name = match self.current_frame().function().chunk.get_constant(idx) {
-                        Some(ConstantValue::Str(name)) => name,
+                        Some(ConstantValue::Str(name)) => name.as_str(),
                         _ => panic!("Unreachable"),
                     };
 
-                    let cls = Class::new(name.clone());
+                    let cls = Class::new(name);
                     self.allocate_and_push(HeapValue::Class(cls));
                 }
 
@@ -468,7 +434,7 @@ impl<'a> VM<'a> {
                         _ => panic!("Unreachable, expecting class below closure"),
                     };
 
-                    class.methods.insert(name.clone(), body);
+                    class.methods.insert(name, body);
                 }
 
                 // When invoke is called, the args must have been pushed onto the stack because of
@@ -544,7 +510,7 @@ impl<'a> VM<'a> {
 
                     sub_cls
                         .methods
-                        .extend(sup_cls.methods.iter().map(|(k, v)| (k.clone(), v.clone())));
+                        .extend(sup_cls.methods.iter().map(|(k, v)| (*k, v.clone())));
 
                     // Pop the subclass
                     self.pop();
@@ -553,11 +519,8 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn execute_set_global(&mut self, constant: Constant) -> VmResult<()> {
-        // Note that the set variable doesn't pop the value from the stack because the set assignment
-        // is an expression statement and there always is a pop instruction after expression statement.
-        let val = self.peek_stack(StackPosition::RevOffset(0)).clone();
-        let name = match self
+    fn get_constant(&mut self, constant: Constant) -> &'static str {
+        match self
             .current_frame()
             .function()
             .chunk
@@ -565,7 +528,14 @@ impl<'a> VM<'a> {
         {
             Some(ConstantValue::Str(name)) => name,
             _ => panic!("Unreachable"),
-        };
+        }
+    }
+
+    fn execute_set_global(&mut self, constant: Constant) -> VmResult<()> {
+        // Note that the set variable doesn't pop the value from the stack because the set assignment
+        // is an expression statement and there always is a pop instruction after expression statement.
+        let val = self.peek_stack(StackPosition::RevOffset(0)).clone();
+        let name = self.get_constant(constant);
 
         match self.globals.get_mut(name) {
             Some(entry) => {
@@ -587,7 +557,7 @@ impl<'a> VM<'a> {
         match constant {
             ConstantValue::Double(val) => self.push(StackValue::Num(*val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(*val)),
-            ConstantValue::Str(val) => self.push(StackValue::Str(UnsafeRef::new(val))),
+            ConstantValue::Str(val) => self.push(StackValue::Str(val)),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => panic!("Unreachable"),
         }
@@ -835,7 +805,7 @@ impl<'a> VM<'a> {
                 writeln!(self.stdout, "{}", val).unwrap();
             }
             StackValue::Str(val) => {
-                writeln!(self.stdout, "{}", &val as &String).unwrap();
+                writeln!(self.stdout, "{}", val).unwrap();
             }
             StackValue::Obj(object) => {
                 writeln!(self.stdout, "{}", object.value).unwrap();

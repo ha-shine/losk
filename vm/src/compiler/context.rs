@@ -43,7 +43,7 @@ impl<'token> Context<'token> {
     ) -> Self {
         Context {
             stream,
-            fun: Function::new("<script>", 0),
+            fun: Function::new("<script>".to_string(), 0),
 
             curr: None,
             prev: None,
