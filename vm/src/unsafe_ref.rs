@@ -18,6 +18,12 @@ impl<T> UnsafeRef<T> {
         }
     }
 
+    pub(crate) unsafe fn empty() -> Self {
+        UnsafeRef {
+            ptr: std::ptr::null()
+        }
+    }
+
     pub(crate) fn borrow_mut(&self) -> &mut T {
         unsafe {
             let mut_ptr = self.ptr as *mut T;

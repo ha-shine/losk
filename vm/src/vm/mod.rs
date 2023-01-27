@@ -43,6 +43,9 @@ pub struct VM<'a> {
     // when the VM starts.
     frames: Vec<CallFrame>,
 
+    // A pointer to the current call frame, which is always valid
+    c_frame: UnsafeRef<CallFrame>,
+
     // List of upvalues that have not been closed. They are objects here because there's not a good
     // way to point directly to the UpvalueObject unless I go the route of double indirection
     // by wrapping the UpvalueObject itself in an Rc.
@@ -72,6 +75,7 @@ impl<'a> VM<'a> {
             stack: Vec::with_capacity(VM_DEFAULT_STACK_SIZE),
             objects: LinkedList::new(HeapAdapter::new()),
             frames: Vec::with_capacity(VM_MAX_CALLFRAME_COUNT),
+            c_frame: unsafe { UnsafeRef::empty() },
             open_upvalues: Vec::new(),
             globals: HashMap::default(),
             stdout,
@@ -153,12 +157,11 @@ impl<'a> VM<'a> {
             panic!("Unreachable");
         };
 
-        self.frames.push(CallFrame {
+        self.execute_callframe(CallFrame {
             fun,
             ip: 0,
             slots: 0,
-        });
-
+        })?;
         self.interpret()
     }
 
@@ -404,6 +407,7 @@ impl<'a> VM<'a> {
                     // To get back there, I need to pop stack.len() - slots.
                     self.pop_n(self.stack.len() - slots);
                     self.push(result);
+                    self.c_frame = UnsafeRef::new(self.frames.last().unwrap());
                 }
 
                 Instruction::Class(Constant(idx)) => {
@@ -531,6 +535,12 @@ impl<'a> VM<'a> {
         }
     }
 
+    fn execute_callframe(&mut self, cf: CallFrame) -> VmResult<()> {
+        self.frames.push(cf);
+        self.c_frame = UnsafeRef::new(self.frames.last().unwrap());
+        Ok(())
+    }
+
     fn execute_set_global(&mut self, constant: Constant) -> VmResult<()> {
         // Note that the set variable doesn't pop the value from the stack because the set assignment
         // is an expression statement and there always is a pop instruction after expression statement.
@@ -655,12 +665,11 @@ impl<'a> VM<'a> {
             return Err(self.error(format_args!("Can only call functions and classes")));
         }
 
-        self.frames.push(CallFrame {
+        self.execute_callframe(CallFrame {
             fun: closure,
             ip: 0,
             slots: self.stack.len() - args - 1,
-        });
-        Ok(())
+        })
     }
 
     fn invoke_from_class(
@@ -1075,11 +1084,11 @@ impl<'a> VM<'a> {
     }
 
     fn current_frame(&self) -> &CallFrame {
-        self.frames.last().unwrap()
+        &self.c_frame
     }
 
     fn current_frame_mut(&mut self) -> &mut CallFrame {
-        self.frames.last_mut().unwrap()
+        &mut self.c_frame
     }
 
     fn error(&self, args: fmt::Arguments) -> Box<RuntimeError> {
