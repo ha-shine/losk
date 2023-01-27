@@ -3,6 +3,7 @@ use intrusive_collections::LinkedList;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
+use std::ptr::null_mut;
 
 use native::clock;
 
@@ -26,7 +27,7 @@ pub struct VM<'a> {
     // pointer that always point to one element past the top. This is not required here since the
     // vector already give us those functionality.
     stack: [StackValue; VM_MAX_STACK_SIZE],
-    s_ptr: usize,
+    s_ptr: *mut StackValue,
 
     // List of objects currently allocated on the heap
     // Note that the heap objects need to be mutable because of two reasons -
@@ -72,7 +73,7 @@ impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write) -> Self {
         let mut vm = VM {
             stack: [Default::default(); VM_MAX_STACK_SIZE],
-            s_ptr: 0,
+            s_ptr: null_mut(),
 
             objects: LinkedList::new(HeapAdapter::new()),
             frames: [Default::default(); VM_MAX_CALLFRAME_COUNT],
@@ -85,6 +86,7 @@ impl<'a> VM<'a> {
             next_gc: 1024 * 1024,
         };
 
+        vm.s_ptr = vm.stack.as_mut_ptr();
         vm.allocate_and_push(HeapValue::NativeFunction(NativeFunction::new(
             "clock", 0, clock,
         )));
@@ -116,7 +118,7 @@ impl<'a> VM<'a> {
         // the `capture_upvalue` do other heavy-lifting stuffs like moving the cursor to correct place.
         enum UpvalueOrStackPosition {
             Upvalue(UnsafeRef<Object>),
-            Position(StackPosition),
+            Pointer(*mut StackValue),
         }
 
         // A bit disappointing that I need a temporary vector just for this. If this proves to be
@@ -125,9 +127,9 @@ impl<'a> VM<'a> {
             .map(|idx| fun.upvalues[idx])
             .map(|upvalue| {
                 if upvalue.is_local {
-                    UpvalueOrStackPosition::Position(StackPosition::Index(slots + upvalue.index))
+                    unsafe { UpvalueOrStackPosition::Pointer(slots.add(upvalue.index)) }
                 } else {
-                    UpvalueOrStackPosition::Upvalue(p_closure.captured[upvalue.index].clone())
+                    UpvalueOrStackPosition::Upvalue(p_closure.captured[upvalue.index])
                 }
             })
             .collect();
@@ -139,7 +141,7 @@ impl<'a> VM<'a> {
                 // Open upvalues are pushed onto open upvalue list in the `capture_upvalue`,
                 // so the temporary values here are safe from GC even though the new call frame has
                 // not been pushed onto stack yet, and the upvalues here are not reachable from callframe.
-                UpvalueOrStackPosition::Position(pos) => captured.push(self.capture_upvalue(pos)),
+                UpvalueOrStackPosition::Pointer(ptr) => captured.push(self.capture_upvalue(ptr)),
             }
         }
 
@@ -154,16 +156,17 @@ impl<'a> VM<'a> {
         let main_closure = self.make_closure(leaked);
         self.allocate_and_push(HeapValue::Closure(main_closure));
 
-        let fun = if let StackValue::Obj(obj) = self.peek_stack(StackPosition::RevOffset(0)) {
-            obj.clone()
+        let fun = if let StackValue::Obj(obj) = self.peek_stack(0) {
+            *obj
         } else {
             panic!("Unreachable");
         };
 
+        // The slots should point to the closure
         self.execute_callframe(CallFrame {
             fun,
             ip: 0,
-            slots: 0,
+            slots: unsafe { self.s_ptr.offset(-1) },
         })?;
         self.interpret()
     }
@@ -190,7 +193,7 @@ impl<'a> VM<'a> {
                     let name = self.get_constant(constant);
 
                     match self.globals.get(name) {
-                        Some(sval) => self.push(sval.clone()),
+                        Some(sval) => self.push(*sval),
                         None => {
                             return Err(self.error(format_args!("Undefined variable '{}'.", name)))
                         }
@@ -208,15 +211,15 @@ impl<'a> VM<'a> {
 
                 Instruction::SetGlobal(val) => self.execute_set_global(val)?,
 
-                Instruction::GetLocal(pos) => {
-                    let val = self.peek_stack(pos).clone();
-                    self.push(val);
-                }
+                Instruction::GetLocal(pos) => unsafe {
+                    let ptr = self.c_frame.slots.add(pos);
+                    self.push(*ptr);
+                },
 
-                Instruction::SetLocal(pos) => {
-                    let last = self.peek_stack(StackPosition::RevOffset(0));
-                    self.put_stack(pos, *last);
-                }
+                Instruction::SetLocal(pos) => unsafe {
+                    let ptr = self.c_frame.slots.add(pos);
+                    *ptr = *self.peek_stack(0);
+                },
 
                 Instruction::GetUpvalue(UpvalueIndex(index)) => {
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
@@ -229,9 +232,9 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::SetUpvalue(UpvalueIndex(index)) => {
-                    let top = self.peek_stack(StackPosition::RevOffset(0)).clone();
+                    let top = self.peek_stack(0);
                     if let HeapValue::Closure(closure) = &self.current_frame().fun.value {
-                        self.set_upvalue(closure.captured[index].clone(), top);
+                        self.set_upvalue(closure.captured[index], *top);
                     } else {
                         panic!("Unreachable")
                     }
@@ -255,12 +258,11 @@ impl<'a> VM<'a> {
 
                     match instance.fields.get(field) {
                         Some(val) => {
-                            let val = val.clone();
-                            self.push(val);
+                            self.push(*val);
                         }
                         None => {
                             let bound_method =
-                                self.bind_method(instance_slot.clone(), instance.class(), field)?;
+                                self.bind_method(instance_slot, instance.class(), field)?;
                             self.allocate_and_push(HeapValue::BoundMethod(bound_method));
                         }
                     };
@@ -278,7 +280,7 @@ impl<'a> VM<'a> {
                     if let HeapValue::Instance(instance) = &mut obj.borrow_mut().value {
                         let field = self.get_constant(constant);
 
-                        instance.fields.insert(field, value_slot.clone());
+                        instance.fields.insert(field, value_slot);
                         self.push(value_slot);
                     } else {
                         return Err(self.error(format_args!("Only instances have properties")));
@@ -326,7 +328,7 @@ impl<'a> VM<'a> {
                 Instruction::JumpIfFalse(JumpDist(dist)) => {
                     // The pointer has already been incremented by 1 before this match statement,
                     // so need to subtract 1 from jump distance.
-                    match self.is_falsey(self.peek_stack(StackPosition::RevOffset(0)).clone()) {
+                    match self.is_falsey(*self.peek_stack(0)) {
                         Ok(StackOrHeap::Stack(StackValue::Bool(val))) => {
                             if val {
                                 self.current_frame_mut().jump(dist - 1)
@@ -356,8 +358,8 @@ impl<'a> VM<'a> {
 
                     // The previous instructions must have pushed `count` amount to stack, so
                     // the function value would exist at stack[-count].
-                    let obj = self.peek_stack(StackPosition::RevOffset(count)).clone();
-                    self.execute_call(obj, count)?;
+                    let obj = self.peek_stack(count as isize);
+                    self.execute_call(*obj, count)?;
                 }
 
                 // Maybe a clearer way is to separate the input and output type of constant.
@@ -380,10 +382,10 @@ impl<'a> VM<'a> {
                     }
                 }
 
-                Instruction::CloseUpvalue => {
-                    self.close_upvalues(self.s_ptr - 1);
+                Instruction::CloseUpvalue => unsafe {
+                    self.close_upvalues(self.s_ptr.offset(-1));
                     self.pop();
-                }
+                },
 
                 Instruction::Return => {
                     // Ensure the current frame's closure is dropped after returning.
@@ -392,8 +394,7 @@ impl<'a> VM<'a> {
 
                     // The return value of a function should be on top of the stack, so it'll be
                     // pushed onto the top of the stack.
-                    let slots = frame.slots;
-                    self.close_upvalues(slots);
+                    self.close_upvalues(frame.slots);
                     let result = self.pop();
 
                     if self.frame_count == 0 {
@@ -404,7 +405,7 @@ impl<'a> VM<'a> {
                     // After calling a function, the stack top needs to point to the place where
                     // the function information is stored previously (so frame.slots).
                     // To get back there, I need to pop stack.len() - slots.
-                    self.pop_n(self.s_ptr - slots);
+                    self.s_ptr = frame.slots;
                     self.push(result);
                     self.c_frame = UnsafeRef::new(&self.frames[self.frame_count - 1]);
                 }
@@ -426,7 +427,7 @@ impl<'a> VM<'a> {
                         _ => panic!("Unreachable"),
                     };
 
-                    let class_slot = self.peek_stack(StackPosition::RevOffset(0));
+                    let class_slot = self.peek_stack(0);
                     let obj = match class_slot {
                         StackValue::Obj(obj) => obj,
                         _ => panic!("Unreachable, expecting class below closure"),
@@ -452,7 +453,7 @@ impl<'a> VM<'a> {
                     };
 
                     let args = args.0;
-                    let receiver = self.peek_stack(StackPosition::RevOffset(args)).clone();
+                    let receiver = *self.peek_stack(args as isize);
                     let instance_obj = match receiver {
                         StackValue::Obj(obj) => obj,
                         _ => return Err(self.error(format_args!("Only instances have methods."))),
@@ -482,7 +483,7 @@ impl<'a> VM<'a> {
                     };
 
                     let args = args.0;
-                    let receiver = self.peek_stack(StackPosition::RevOffset(args)).clone();
+                    let receiver = *self.peek_stack(args as isize);
                     let instance_obj = match receiver {
                         StackValue::Obj(obj) => obj,
                         _ => return Err(self.error(format_args!("Only instances have methods."))),
@@ -496,8 +497,8 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::Inherit => {
-                    let sup = self.peek_stack(StackPosition::RevOffset(1));
-                    let sub = self.peek_stack(StackPosition::RevOffset(0));
+                    let sup = self.peek_stack(1);
+                    let sub = self.peek_stack(0);
                     let (sup_obj, sub_obj) = match (sup, sub) {
                         (StackValue::Obj(sup_obj), StackValue::Obj(sub_obj)) => (sup_obj, sub_obj),
                         _ => return Err(self.error(format_args!("Superclass must be a class"))),
@@ -513,7 +514,7 @@ impl<'a> VM<'a> {
 
                     sub_cls
                         .methods
-                        .extend(sup_cls.methods.iter().map(|(k, v)| (*k, v.clone())));
+                        .extend(sup_cls.methods.iter().map(|(k, v)| (*k, *v)));
 
                     // Pop the subclass
                     self.pop();
@@ -544,7 +545,7 @@ impl<'a> VM<'a> {
     fn execute_set_global(&mut self, constant: Constant) -> VmResult<()> {
         // Note that the set variable doesn't pop the value from the stack because the set assignment
         // is an expression statement and there always is a pop instruction after expression statement.
-        let val = self.peek_stack(StackPosition::RevOffset(0)).clone();
+        let val = *self.peek_stack(0);
         let name = self.get_constant(constant);
 
         match self.globals.get_mut(name) {
@@ -594,7 +595,7 @@ impl<'a> VM<'a> {
     fn execute_call(&mut self, ptr: StackValue, args: usize) -> VmResult<()> {
         if let StackValue::Obj(obj) = ptr {
             match &obj.value {
-                HeapValue::Closure(_) => self.call_closure(obj.clone(), args),
+                HeapValue::Closure(_) => self.call_closure(obj, args),
 
                 HeapValue::NativeFunction(fun) => {
                     if args != fun.arity {
@@ -604,9 +605,13 @@ impl<'a> VM<'a> {
                         )));
                     }
 
-                    let arg_beg = self.s_ptr - args;
-                    let result = (fun.fun)(&self.stack[arg_beg..]);
-                    self.pop_n(args + 1); // args + function data
+                    let result = unsafe {
+                        let ptr_beg = self.s_ptr.offset(-(args as isize));
+                        let arguments = std::slice::from_raw_parts(ptr_beg, args);
+                        (fun.fun)(arguments)
+                    };
+
+                    self.pop_n(args as isize + 1); // args + function data
                     if let Some(result) = result {
                         self.store_native_value(result)?;
                     }
@@ -622,7 +627,7 @@ impl<'a> VM<'a> {
                     // The function is at -count position, replace that with the instance
                     // that is just created
                     let instance_slot = self.pop();
-                    self.put_stack(StackPosition::RevOffset(args), instance_slot);
+                    *self.peek_stack_mut(args as isize) = instance_slot;
 
                     // If there's an initializer, call the initializer. If there's
                     // not but the arg count is not 0, the user must have passed
@@ -640,8 +645,8 @@ impl<'a> VM<'a> {
                     // I need to push the receiver as the zero-slot local, instead of the
                     // bound method itself. `this` is basically the first argument for
                     // the method.
-                    self.put_stack(StackPosition::RevOffset(args), method.receiver.clone());
-                    self.call_closure(method.method.clone(), args)
+                    *self.peek_stack_mut(args as isize) = method.receiver;
+                    self.call_closure(method.method, args)
                 }
 
                 HeapValue::Str(_) | HeapValue::Upvalue(_) | HeapValue::Instance(_) => {
@@ -668,7 +673,7 @@ impl<'a> VM<'a> {
         self.execute_callframe(CallFrame {
             fun: closure,
             ip: 0,
-            slots: self.s_ptr - args - 1,
+            slots: unsafe { self.s_ptr.offset(-(args as isize) - 1) },
         })
     }
 
@@ -681,9 +686,9 @@ impl<'a> VM<'a> {
     ) -> VmResult<()> {
         // Wait, instance is no longer reachable from stack here. Because the instance's field is
         // put onto the place where the instance should be.
-        if let Some(field) = instance.fields.get(name).cloned() {
-            self.put_stack(StackPosition::RevOffset(args), field.clone());
-            self.execute_call(field, args)?;
+        if let Some(field) = instance.fields.get(name) {
+            *self.peek_stack_mut(args as isize) = *field;
+            self.execute_call(*field, args)?;
             return Ok(());
         }
 
@@ -825,24 +830,21 @@ impl<'a> VM<'a> {
         };
     }
 
-    fn capture_upvalue(&mut self, pos: StackPosition) -> UnsafeRef<Object> {
-        let index = self.stack_pos_to_index(pos);
-
+    fn capture_upvalue(&mut self, ptr: *mut StackValue) -> UnsafeRef<Object> {
         for open in &self.open_upvalues {
             match &open.value {
                 HeapValue::Upvalue(UpvalueState::Open(pos)) => {
-                    let curr = self.stack_pos_to_index(*pos);
-                    if curr == index {
-                        return open.clone();
+                    if *pos == ptr {
+                        return *open;
                     }
                 }
                 _ => panic!("Found non-upvalue in open upvalue list"),
             }
         }
 
-        self.allocate_and_push(HeapValue::Upvalue(UpvalueState::Open(pos)));
+        self.allocate_and_push(HeapValue::Upvalue(UpvalueState::Open(ptr)));
         if let StackValue::Obj(obj) = self.pop() {
-            self.open_upvalues.push(obj.clone());
+            self.open_upvalues.push(obj);
             obj
         } else {
             panic!("Unreachable")
@@ -853,16 +855,17 @@ impl<'a> VM<'a> {
     // The open upvalues are ordered by their stack position from the highest to lowest. The loop
     // will stop as soon as the cursor reaches an open value whose stack position is lower than the
     // given index.
-    fn close_upvalues(&mut self, last_index: usize) {
+    fn close_upvalues(&mut self, top: *mut StackValue) {
         let upvalues = std::mem::take(&mut self.open_upvalues);
         self.open_upvalues = upvalues
             .into_iter()
             .filter(|val| match &val.value {
                 HeapValue::Upvalue(UpvalueState::Open(pos)) => {
-                    let curr = self.stack_pos_to_index(*pos);
-                    if curr >= last_index {
-                        let item = self.stack[curr].clone();
-                        val.borrow_mut().value = HeapValue::Upvalue(UpvalueState::Closed(item));
+                    if *pos >= top {
+                        unsafe {
+                            val.borrow_mut().value =
+                                HeapValue::Upvalue(UpvalueState::Closed(**pos as StackValue));
+                        }
                         false
                     } else {
                         true
@@ -879,8 +882,8 @@ impl<'a> VM<'a> {
     fn get_upvalue(&self, obj: &UnsafeRef<Object>) -> StackValue {
         match &obj.value {
             HeapValue::Upvalue(val) => match val {
-                UpvalueState::Open(pos) => self.peek_stack(*pos).clone(),
-                UpvalueState::Closed(val) => val.clone(),
+                UpvalueState::Open(pos) => unsafe { **pos as StackValue },
+                UpvalueState::Closed(val) => *val,
             },
             _ => panic!("Object is not an upvalue"),
         }
@@ -890,11 +893,12 @@ impl<'a> VM<'a> {
         match &obj.value {
             HeapValue::Upvalue(val) => {
                 if let UpvalueState::Open(pos) = val {
-                    self.put_stack(*pos, value);
-                    return;
+                    unsafe {
+                        **pos = value;
+                    }
+                } else {
+                    obj.borrow_mut().value = HeapValue::Upvalue(UpvalueState::Closed(value));
                 }
-
-                obj.borrow_mut().value = HeapValue::Upvalue(UpvalueState::Closed(value));
             }
             _ => panic!("Object is not an upvalue"),
         };
@@ -907,7 +911,7 @@ impl<'a> VM<'a> {
         name: &str,
     ) -> VmResult<BoundMethod> {
         let method = match class.methods.get(name) {
-            Some(method) => method.clone(),
+            Some(method) => *method,
             None => return Err(self.error(format_args!("Undefined property '{}'.", name))),
         };
 
@@ -918,37 +922,32 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn peek_stack(&self, pos: StackPosition) -> &StackValue {
-        let index = self.stack_pos_to_index(pos);
-        &self.stack[index]
+    fn peek_stack(&self, dist: isize) -> &StackValue {
+        unsafe { &*self.s_ptr.offset(-dist - 1) as &StackValue }
     }
 
-    fn put_stack(&mut self, pos: StackPosition, val: StackValue) {
-        let index = self.stack_pos_to_index(pos);
-        self.stack[index] = val
-    }
-
-    fn stack_pos_to_index(&self, pos: StackPosition) -> usize {
-        match pos {
-            StackPosition::Offset(offset) => self.current_frame().slots + offset,
-            StackPosition::Index(index) => index,
-            StackPosition::RevOffset(offset) => self.s_ptr - offset - 1,
-        }
+    fn peek_stack_mut(&mut self, dist: isize) -> &mut StackValue {
+        unsafe { &mut *self.s_ptr.offset(-dist - 1) as &mut StackValue }
     }
 
     fn push(&mut self, val: StackValue) {
-        self.stack[self.s_ptr] = val;
-        self.s_ptr += 1;
+        unsafe {
+            *self.s_ptr = val;
+            self.s_ptr = self.s_ptr.offset(1);
+        }
     }
 
     fn pop(&mut self) -> StackValue {
-        self.s_ptr -= 1;
-        let val = self.stack[self.s_ptr];
-        val
+        unsafe {
+            self.s_ptr = self.s_ptr.offset(-1);
+            *self.s_ptr as StackValue
+        }
     }
 
-    fn pop_n(&mut self, n: usize) {
-        self.s_ptr -= n;
+    fn pop_n(&mut self, n: isize) {
+        unsafe {
+            self.s_ptr = self.s_ptr.offset(-n);
+        }
     }
 
     fn allocate_and_push(&mut self, val: HeapValue) {
@@ -989,9 +988,13 @@ impl<'a> VM<'a> {
     // I'm using DFS while the textbook uses BFS and it shouldn't really affect the runtime.
     fn mark(&mut self) {
         // Mark the objects from the stack recursively
-        for val in (0..self.s_ptr).map(|val| self.stack[val]) {
-            if let StackValue::Obj(obj) = val {
-                Self::mark_object(obj.borrow_mut());
+        let mut s_ptr = self.stack.as_mut_ptr();
+        while s_ptr != self.s_ptr {
+            unsafe {
+                if let StackValue::Obj(obj) = *s_ptr {
+                    Self::mark_object(obj.borrow_mut());
+                }
+                s_ptr = s_ptr.add(1);
             }
         }
 

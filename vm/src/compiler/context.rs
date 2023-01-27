@@ -183,9 +183,7 @@ impl<'token> Context<'token> {
 
     pub(super) fn add_return(&mut self) {
         match self.ftype {
-            FunctionType::Initializer => {
-                self.add_instruction(Instruction::GetLocal(StackPosition::Offset(0)))
-            }
+            FunctionType::Initializer => self.add_instruction(Instruction::GetLocal(0)),
             _ => self.add_instruction(Instruction::LiteralNil),
         };
 

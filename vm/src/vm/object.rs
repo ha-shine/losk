@@ -2,7 +2,7 @@ use ahash::RandomState;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 
-use crate::chunk::{Chunk, StackPosition, UpvalueIndex};
+use crate::chunk::{Chunk, UpvalueIndex};
 use crate::limits::COMP_UPVALUE_LIMIT;
 use crate::unsafe_ref::UnsafeRef;
 use crate::value::ConstantValue;
@@ -145,7 +145,7 @@ impl PartialEq for Closure {
 
 #[derive(Debug, PartialEq)]
 pub(super) enum UpvalueState {
-    Open(StackPosition),
+    Open(*mut StackValue),
     Closed(StackValue),
 }
 

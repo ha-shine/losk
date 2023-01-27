@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::fmt;
 use std::fmt::{Debug, Display, Formatter};
+use std::ptr::null_mut;
 
 use intrusive_collections::{intrusive_adapter, LinkedListLink};
 
@@ -149,12 +150,12 @@ impl Object {
 // is called. This keeps an offset of value stack pointer in `slots` which marks the start of
 // this call and every value this frame owns needs to be referenced using index `slots + offset`.
 // Copy-derived to initialise an array of frames with default values when the VM starts.
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone)]
 pub(super) struct CallFrame {
     pub(super) fun: UnsafeRef<Object>,
 
     pub(super) ip: usize,
-    pub(super) slots: usize,
+    pub(super) slots: *mut StackValue,
 }
 
 impl CallFrame {
@@ -178,6 +179,16 @@ impl CallFrame {
 
     pub(super) fn loop_(&mut self, offset: usize) {
         self.ip -= offset;
+    }
+}
+
+impl Default for CallFrame {
+    fn default() -> Self {
+        CallFrame {
+            fun: Default::default(),
+            ip: Default::default(),
+            slots: null_mut(),
+        }
     }
 }
 

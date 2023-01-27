@@ -809,8 +809,8 @@ impl Compiler {
                 )
             }
             Ok(LocalResolution::Local(LocalIndex(index))) => (
-                Instruction::SetLocal(StackPosition::Offset(index)),
-                Instruction::GetLocal(StackPosition::Offset(index)),
+                Instruction::SetLocal(index),
+                Instruction::GetLocal(index),
             ),
             Ok(LocalResolution::UpValue(index)) => (
                 Instruction::SetUpvalue(index),

@@ -17,8 +17,8 @@ pub(crate) enum Instruction {
     GetGlobal(Constant),
     DefineGlobal(Constant),
     SetGlobal(Constant),
-    GetLocal(StackPosition),
-    SetLocal(StackPosition),
+    GetLocal(usize),
+    SetLocal(usize),
     GetUpvalue(UpvalueIndex),
     SetUpvalue(UpvalueIndex),
     SetProperty(Constant),
@@ -46,19 +46,7 @@ pub(crate) enum Instruction {
     Invoke(Invoke),
     SuperInvoke(Invoke),
     Inherit,
-}
-
-// The position of a value on the stack represented in different ways -
-// - Offset is how far the value is from the beginning of that call frame
-// - Index is the absolute position starting from index 0
-// - RevOffset is the same as offset, but in reverse so the actual position is len - offset - 1
-// They are interchangeable but need the context of a VM
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub(crate) enum StackPosition {
-    Offset(usize),
-    Index(usize),
-    RevOffset(usize),
-}
+} 
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct Constant(pub(crate) usize);
