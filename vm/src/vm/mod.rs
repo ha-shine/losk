@@ -154,6 +154,7 @@ impl<'a> VM<'a> {
     pub fn run(&mut self, main: Function) -> VmResult<()> {
         let leaked = Box::leak(Box::new(main));
         let main_closure = self.make_closure(leaked);
+        let ip = main_closure.fun.chunk.instructions.as_ptr() as *mut Instruction;
         self.allocate_and_push(HeapValue::Closure(main_closure));
 
         let fun = if let StackValue::Obj(obj) = self.peek_stack(0) {
@@ -165,7 +166,7 @@ impl<'a> VM<'a> {
         // The slots should point to the closure
         self.execute_callframe(CallFrame {
             fun,
-            ip: 0,
+            ip,
             slots: unsafe { self.s_ptr.offset(-1) },
         })?;
         self.interpret()
@@ -175,9 +176,11 @@ impl<'a> VM<'a> {
         loop {
             // Instruction is cheap to copy, though the run loop is very sensitive to performance
             // and not sure this would affect the runtime severely.
-            let instruction = match self.current_frame_mut().next() {
-                Some(instruction) => *instruction,
-                None => return Ok(()),
+            let instruction = unsafe {
+                let ip = self.current_frame().ip;
+                let instruction = *ip as Instruction;
+                self.current_frame_mut().ip = ip.add(1);
+                instruction
             };
 
             match instruction {
@@ -659,20 +662,22 @@ impl<'a> VM<'a> {
     }
 
     fn call_closure(&mut self, closure: UnsafeRef<Object>, args: usize) -> VmResult<()> {
-        if let HeapValue::Closure(closure) = &closure.value {
+        let ip = if let HeapValue::Closure(closure) = &closure.value {
             if closure.fun.arity != args {
                 return Err(self.error(format_args!(
                     "Expected {} arguments but got {}.",
                     closure.fun.arity, args
                 )));
             }
+
+            closure.fun.chunk.instructions.as_ptr() as *mut Instruction
         } else {
             return Err(self.error(format_args!("Can only call functions and classes")));
-        }
+        };
 
         self.execute_callframe(CallFrame {
             fun: closure,
-            ip: 0,
+            ip,
             slots: unsafe { self.s_ptr.offset(-(args as isize) - 1) },
         })
     }
@@ -1101,8 +1106,17 @@ impl<'a> VM<'a> {
             .rev()
             .map(|val| self.frames[val])
             .take(VM_STACK_TRACE_LIMIT)
-            .map(|frame| {
-                let line = *frame.function().chunk.get_line(frame.ip - 1).unwrap();
+            .map(|frame| unsafe {
+                let line = *frame
+                    .function()
+                    .chunk
+                    .get_line(
+                        frame
+                            .ip
+                            .offset_from(frame.function().chunk.instructions.as_ptr())
+                            as usize,
+                    )
+                    .unwrap();
                 let name = frame.function().name.clone();
                 StackData::new(line, name)
             })

@@ -46,7 +46,7 @@ pub(crate) enum Instruction {
     Invoke(Invoke),
     SuperInvoke(Invoke),
     Inherit,
-} 
+}
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub(crate) struct Constant(pub(crate) usize);
@@ -68,7 +68,7 @@ pub(crate) struct Invoke {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chunk {
-    instructions: Vec<Instruction>,
+    pub(crate) instructions: Vec<Instruction>,
     line_numbers: Vec<usize>,
     constants: Vec<ConstantValue>,
 }
@@ -122,10 +122,6 @@ impl Chunk {
 
     pub(crate) fn get_line(&self, offset: usize) -> Option<&usize> {
         self.line_numbers.get(offset)
-    }
-
-    pub(crate) fn get_instruction(&self, offset: usize) -> Option<&Instruction> {
-        self.instructions.get(offset)
     }
 
     pub(crate) fn get_constant(&self, index: usize) -> Option<&ConstantValue> {

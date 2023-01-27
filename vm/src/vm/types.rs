@@ -154,16 +154,11 @@ impl Object {
 pub(super) struct CallFrame {
     pub(super) fun: UnsafeRef<Object>,
 
-    pub(super) ip: usize,
+    pub(super) ip: *mut Instruction,
     pub(super) slots: *mut StackValue,
 }
 
 impl CallFrame {
-    pub(super) fn next(&mut self) -> Option<&Instruction> {
-        self.ip += 1;
-        let result = self.function().chunk.get_instruction(self.ip - 1);
-        result
-    }
 
     pub(super) fn function(&self) -> &'static Function {
         match &self.fun.value {
@@ -174,11 +169,15 @@ impl CallFrame {
     }
 
     pub(super) fn jump(&mut self, offset: usize) {
-        self.ip += offset;
+        unsafe {
+            self.ip = self.ip.add(offset)
+        }
     }
 
     pub(super) fn loop_(&mut self, offset: usize) {
-        self.ip -= offset;
+        unsafe {
+            self.ip = self.ip.sub(offset);
+        }
     }
 }
 
@@ -186,7 +185,7 @@ impl Default for CallFrame {
     fn default() -> Self {
         CallFrame {
             fun: Default::default(),
-            ip: Default::default(),
+            ip: null_mut(),
             slots: null_mut(),
         }
     }
