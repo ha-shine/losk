@@ -8,7 +8,7 @@ use native::clock;
 
 use crate::chunk::*;
 use crate::limits::{
-    GC_HEAP_GROW_FACTOR, VM_DEFAULT_STACK_SIZE, VM_MAX_CALLFRAME_COUNT, VM_STACK_TRACE_LIMIT,
+    GC_HEAP_GROW_FACTOR, VM_MAX_CALLFRAME_COUNT, VM_MAX_STACK_SIZE, VM_STACK_TRACE_LIMIT,
 };
 use crate::object::*;
 use crate::unsafe_ref::UnsafeRef;
@@ -25,7 +25,8 @@ pub struct VM<'a> {
     // The stack as a growable vector. In textbook, this is represented by an array and a stack
     // pointer that always point to one element past the top. This is not required here since the
     // vector already give us those functionality.
-    stack: Vec<StackValue>,
+    stack: [StackValue; VM_MAX_STACK_SIZE],
+    s_ptr: usize,
 
     // List of objects currently allocated on the heap
     // Note that the heap objects need to be mutable because of two reasons -
@@ -41,9 +42,8 @@ pub struct VM<'a> {
     // The call frame is limited and is allocated on the rust stack for faster access compared to
     // a heap. This comes with limitation that the frame count will be limited and pre-allocation
     // when the VM starts.
-    frames: Vec<CallFrame>,
-
-    // A pointer to the current call frame, which is always valid
+    frames: [CallFrame; VM_MAX_CALLFRAME_COUNT],
+    frame_count: usize,
     c_frame: UnsafeRef<CallFrame>,
 
     // List of upvalues that have not been closed. They are objects here because there's not a good
@@ -70,12 +70,14 @@ pub struct VM<'a> {
 // it will not be reclaimed
 impl<'a> VM<'a> {
     pub fn new(stdout: &'a mut dyn Write) -> Self {
-        // In the
         let mut vm = VM {
-            stack: Vec::with_capacity(VM_DEFAULT_STACK_SIZE),
+            stack: [Default::default(); VM_MAX_STACK_SIZE],
+            s_ptr: 0,
+
             objects: LinkedList::new(HeapAdapter::new()),
-            frames: Vec::with_capacity(VM_MAX_CALLFRAME_COUNT),
-            c_frame: unsafe { UnsafeRef::empty() },
+            frames: [Default::default(); VM_MAX_CALLFRAME_COUNT],
+            frame_count: 0,
+            c_frame: Default::default(),
             open_upvalues: Vec::new(),
             globals: HashMap::default(),
             stdout,
@@ -87,7 +89,8 @@ impl<'a> VM<'a> {
             "clock", 0, clock,
         )));
 
-        vm.globals.insert("clock", vm.stack.pop().unwrap());
+        let clock = vm.pop();
+        vm.globals.insert("clock", clock);
         vm
     }
 
@@ -174,11 +177,6 @@ impl<'a> VM<'a> {
                 None => return Ok(()),
             };
 
-            #[cfg(feature = "debug-trace-execution")]
-            for val in &self.stack {
-                writeln!(self.stdout, "[ {:10?} ]", val).unwrap();
-            }
-
             match instruction {
                 Instruction::Constant(val) => self.execute_constant(val)?,
                 Instruction::LiteralTrue => self.push(StackValue::Bool(true)),
@@ -216,8 +214,8 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::SetLocal(pos) => {
-                    let last = self.stack.last().unwrap().clone();
-                    self.put_stack(pos, last);
+                    let last = self.peek_stack(StackPosition::RevOffset(0));
+                    self.put_stack(pos, *last);
                 }
 
                 Instruction::GetUpvalue(UpvalueIndex(index)) => {
@@ -352,7 +350,7 @@ impl<'a> VM<'a> {
 
                 // Probably should be separated into it's own function
                 Instruction::Call(ArgCount(count)) => {
-                    if self.frames.len() == VM_MAX_CALLFRAME_COUNT {
+                    if self.frame_count == VM_MAX_CALLFRAME_COUNT {
                         return Err(self.error(format_args!("Stack overflow.")));
                     }
 
@@ -383,13 +381,14 @@ impl<'a> VM<'a> {
                 }
 
                 Instruction::CloseUpvalue => {
-                    self.close_upvalues(self.stack.len() - 1);
+                    self.close_upvalues(self.s_ptr - 1);
                     self.pop();
                 }
 
                 Instruction::Return => {
                     // Ensure the current frame's closure is dropped after returning.
-                    let frame = self.frames.pop().unwrap();
+                    let frame = self.frames[self.frame_count - 1];
+                    self.frame_count -= 1;
 
                     // The return value of a function should be on top of the stack, so it'll be
                     // pushed onto the top of the stack.
@@ -397,7 +396,7 @@ impl<'a> VM<'a> {
                     self.close_upvalues(slots);
                     let result = self.pop();
 
-                    if self.frames.is_empty() {
+                    if self.frame_count == 0 {
                         self.pop();
                         return Ok(());
                     }
@@ -405,9 +404,9 @@ impl<'a> VM<'a> {
                     // After calling a function, the stack top needs to point to the place where
                     // the function information is stored previously (so frame.slots).
                     // To get back there, I need to pop stack.len() - slots.
-                    self.pop_n(self.stack.len() - slots);
+                    self.pop_n(self.s_ptr - slots);
                     self.push(result);
-                    self.c_frame = UnsafeRef::new(self.frames.last().unwrap());
+                    self.c_frame = UnsafeRef::new(&self.frames[self.frame_count - 1]);
                 }
 
                 Instruction::Class(Constant(idx)) => {
@@ -536,8 +535,9 @@ impl<'a> VM<'a> {
     }
 
     fn execute_callframe(&mut self, cf: CallFrame) -> VmResult<()> {
-        self.frames.push(cf);
-        self.c_frame = UnsafeRef::new(self.frames.last().unwrap());
+        self.frames[self.frame_count] = cf;
+        self.c_frame = UnsafeRef::new(&self.frames[self.frame_count]);
+        self.frame_count += 1;
         Ok(())
     }
 
@@ -604,7 +604,7 @@ impl<'a> VM<'a> {
                         )));
                     }
 
-                    let arg_beg = self.stack.len() - args;
+                    let arg_beg = self.s_ptr - args;
                     let result = (fun.fun)(&self.stack[arg_beg..]);
                     self.pop_n(args + 1); // args + function data
                     if let Some(result) = result {
@@ -668,7 +668,7 @@ impl<'a> VM<'a> {
         self.execute_callframe(CallFrame {
             fun: closure,
             ip: 0,
-            slots: self.stack.len() - args - 1,
+            slots: self.s_ptr - args - 1,
         })
     }
 
@@ -696,7 +696,7 @@ impl<'a> VM<'a> {
     fn store_op_result(&mut self, res: OpResult) -> VmResult<()> {
         match res {
             Ok(StackOrHeap::Stack(val)) => {
-                self.stack.push(val);
+                self.push(val);
                 Ok(())
             }
             Ok(StackOrHeap::Heap(val)) => {
@@ -932,26 +932,28 @@ impl<'a> VM<'a> {
         match pos {
             StackPosition::Offset(offset) => self.current_frame().slots + offset,
             StackPosition::Index(index) => index,
-            StackPosition::RevOffset(offset) => self.stack.len() - offset - 1,
+            StackPosition::RevOffset(offset) => self.s_ptr - offset - 1,
         }
     }
 
     fn push(&mut self, val: StackValue) {
-        self.stack.push(val)
+        self.stack[self.s_ptr] = val;
+        self.s_ptr += 1;
     }
 
     fn pop(&mut self) -> StackValue {
-        self.stack.pop().unwrap()
+        self.s_ptr -= 1;
+        let val = self.stack[self.s_ptr];
+        val
     }
 
     fn pop_n(&mut self, n: usize) {
-        let start = self.stack.len() - n;
-        self.stack.drain(start..);
+        self.s_ptr -= n;
     }
 
     fn allocate_and_push(&mut self, val: HeapValue) {
         let sval = self.allocate_object(val);
-        self.stack.push(sval)
+        self.push(sval);
     }
 
     // This is where the GC will make the decision on doing GC which means be careful using this
@@ -962,7 +964,7 @@ impl<'a> VM<'a> {
         self.objects.push_front(Object::new(val));
 
         // Temporarily push the object on to stack so that it's reachable in the sweeping phase
-        self.stack.push(StackValue::Obj(UnsafeRef::new(
+        self.push(StackValue::Obj(UnsafeRef::new(
             self.objects.front().get().unwrap(),
         )));
 
@@ -974,7 +976,7 @@ impl<'a> VM<'a> {
             self.next_gc = self.bytes_allocated * GC_HEAP_GROW_FACTOR;
         }
 
-        self.stack.pop().unwrap()
+        self.pop()
     }
 
     // In the text book, the marking phase is separated into two parts -
@@ -987,7 +989,7 @@ impl<'a> VM<'a> {
     // I'm using DFS while the textbook uses BFS and it shouldn't really affect the runtime.
     fn mark(&mut self) {
         // Mark the objects from the stack recursively
-        for val in &self.stack {
+        for val in (0..self.s_ptr).map(|val| self.stack[val]) {
             if let StackValue::Obj(obj) = val {
                 Self::mark_object(obj.borrow_mut());
             }
@@ -1001,7 +1003,7 @@ impl<'a> VM<'a> {
         }
 
         // Walk through the call frames
-        for frame in &self.frames {
+        for frame in (0..self.frame_count).map(|val| self.frames[val]) {
             Self::mark_object(frame.fun.borrow_mut());
         }
 
@@ -1092,10 +1094,9 @@ impl<'a> VM<'a> {
     }
 
     fn error(&self, args: fmt::Arguments) -> Box<RuntimeError> {
-        let data: Vec<_> = self
-            .frames
-            .iter()
+        let data: Vec<_> = (0..self.frame_count)
             .rev()
+            .map(|val| self.frames[val])
             .take(VM_STACK_TRACE_LIMIT)
             .map(|frame| {
                 let line = *frame.function().chunk.get_line(frame.ip - 1).unwrap();

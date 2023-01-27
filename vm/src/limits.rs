@@ -1,5 +1,5 @@
 pub(crate) const GC_HEAP_GROW_FACTOR: usize = 2;
-pub(crate) const VM_DEFAULT_STACK_SIZE: usize = 256;
+pub(crate) const VM_MAX_STACK_SIZE: usize = 64 * 255;
 pub(crate) const VM_MAX_CALLFRAME_COUNT: usize = 256;
 pub(crate) const VM_STACK_TRACE_LIMIT: usize = 20;
 

@@ -5,7 +5,7 @@ use criterion::{criterion_group, criterion_main, Criterion};
 use losk_core::Scanner;
 use vm::{Compiler, VM};
 
-fn benchmark_fib(c: &mut Criterion) {
+fn benchmark(c: &mut Criterion) {
     let src = include_str!("../../tests/benchmark/instantiation.lox");
     let mut scanner = Scanner::new();
     let compiler = Compiler::new();

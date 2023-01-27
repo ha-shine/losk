@@ -10,7 +10,7 @@ use crate::unsafe_ref::UnsafeRef;
 use crate::vm::error::RuntimeError;
 use crate::Function;
 
-#[derive(Clone)]
+#[derive(Copy, Clone)]
 pub(super) enum StackValue {
     Num(f64),
     Bool(bool),
@@ -40,6 +40,12 @@ impl StackValue {
             },
             _ => None,
         }
+    }
+}
+
+impl Default for StackValue {
+    fn default() -> Self {
+        StackValue::Nil
     }
 }
 
@@ -143,7 +149,7 @@ impl Object {
 // is called. This keeps an offset of value stack pointer in `slots` which marks the start of
 // this call and every value this frame owns needs to be referenced using index `slots + offset`.
 // Copy-derived to initialise an array of frames with default values when the VM starts.
-#[derive(Clone)]
+#[derive(Copy, Clone, Default)]
 pub(super) struct CallFrame {
     pub(super) fun: UnsafeRef<Object>,
 

@@ -1,13 +1,21 @@
 use std::ops::{Deref, DerefMut};
 
-#[derive(Debug, Copy)]
+#[derive(Debug)]
 pub(crate) struct UnsafeRef<T> {
     ptr: *const T,
 }
 
+impl<T> Copy for UnsafeRef<T> {}
+
 impl<T> Clone for UnsafeRef<T> {
     fn clone(&self) -> Self {
         UnsafeRef { ptr: self.ptr }
+    }
+}
+
+impl<T> Default for UnsafeRef<T> {
+    fn default() -> Self {
+        unsafe { Self::empty() }
     }
 }
 
@@ -20,7 +28,7 @@ impl<T> UnsafeRef<T> {
 
     pub(crate) unsafe fn empty() -> Self {
         UnsafeRef {
-            ptr: std::ptr::null()
+            ptr: std::ptr::null(),
         }
     }
 
