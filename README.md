@@ -26,3 +26,4 @@ are unlikely to be completed and that's why they are called TODOs, heh.
 
 If you want to compare the performance between versions, I have translated the benchmark programs to python and 
 documented them in [BENCHMARK.md](./BENCHMARK.md). You can find every optimization I have done in that file as well.
+The file also include benchmarks of the unsafe but more performant version which is much closer to clox.

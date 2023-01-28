@@ -19,3 +19,12 @@ But the bad news is that I discovered it's possible to leak memory by creating c
 I am using strong Rc pointers for storing reference to instance field.
 
 ![1.0.1 Benchmark](./assets/benchmarks/1_0_1.png)
+
+## Unsafe
+
+There's an unsafe (and not very readable, sorry!) version at the branch `unsafe-optimization` where I've applied
+a few optimization at the cost of safety. They include but not limited to avoiding `Rc` but instead use normal `Box` 
+and pointers, using stack and callframe pointers to match more closely to the textbook clox implementation. They perform
+better compared to the safe version.
+
+![Unsafe Benchmark](https://github.com/ha-shine/losk/blob/d6a4fb21205e3a1aa32fc46469bb65dc382348fa/assets/benchmarks/unsafe.png)
