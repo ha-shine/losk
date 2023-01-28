@@ -2,6 +2,7 @@ use losk_core::{Token, TokenStream, Type};
 
 use crate::chunk::{Constant, Instruction};
 use crate::compiler::*;
+use crate::hashed::Hashed;
 use crate::limits::COMP_MAX_JUMP_DIST;
 use crate::object::Upvalue;
 use crate::value::ConstantValue;
@@ -139,7 +140,10 @@ impl<'token> Context<'token> {
     }
 
     pub(super) fn identifier_constant(&mut self, name: String) -> CompilationResult<Constant> {
-        let res = self.fun.chunk.make_constant(ConstantValue::Str(name));
+        let res = self
+            .fun
+            .chunk
+            .make_constant(ConstantValue::Str(Hashed::new(name)));
         self.unwrap_result(res)
     }
 

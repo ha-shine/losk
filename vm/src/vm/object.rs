@@ -1,8 +1,10 @@
-use ahash::RandomState;
+use nohash::NoHashHasher;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
+use std::hash::BuildHasherDefault;
 
 use crate::chunk::{Chunk, UpvalueIndex};
+use crate::hashed::Hashed;
 use crate::limits::COMP_UPVALUE_LIMIT;
 use crate::unsafe_ref::UnsafeRef;
 use crate::value::ConstantValue;
@@ -24,7 +26,7 @@ impl From<NativeValue> for ConstantValue {
         match value {
             NativeValue::Num(val) => ConstantValue::Double(val),
             NativeValue::Bool(val) => ConstantValue::Bool(val),
-            NativeValue::Str(val) => ConstantValue::Str(val),
+            NativeValue::Str(val) => ConstantValue::Str(Hashed::new(val)),
             NativeValue::Nil => ConstantValue::Nil,
         }
     }
@@ -149,10 +151,20 @@ pub(super) enum UpvalueState {
     Closed(StackValue),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug)]
 pub(super) struct Class {
     pub(super) name: &'static str,
-    pub(super) methods: HashMap<&'static str, StackValue, RandomState>,
+    pub(super) methods: HashMap<
+        Hashed<&'static str>,
+        StackValue,
+        BuildHasherDefault<NoHashHasher<Hashed<&'static str>>>,
+    >,
+}
+
+impl PartialEq for Class {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
 }
 
 impl Class {
@@ -169,7 +181,11 @@ pub(super) struct Instance {
     pub(super) class: UnsafeRef<Object>,
 
     // RefCell is required here because I need to set the properties
-    pub(super) fields: HashMap<&'static str, StackValue, RandomState>,
+    pub(super) fields: HashMap<
+        Hashed<&'static str>,
+        StackValue,
+        BuildHasherDefault<NoHashHasher<Hashed<&'static str>>>,
+    >,
 }
 
 impl Instance {

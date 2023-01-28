@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 use std::ops::{Add, Div, Mul, Neg, Not, Sub};
 
+use crate::hashed::Hashed;
 use losk_core::Literal;
 
 use crate::object::Function;
@@ -12,7 +13,7 @@ use crate::object::Function;
 pub(crate) enum ConstantValue {
     Double(f64),
     Bool(bool),
-    Str(String),
+    Str(Hashed<String>),
     Fun(Function),
     Nil,
 }
@@ -22,7 +23,7 @@ impl Display for ConstantValue {
         match self {
             ConstantValue::Double(val) => write!(f, "{}", val),
             ConstantValue::Bool(val) => write!(f, "{}", val),
-            ConstantValue::Str(val) => write!(f, "{}", val),
+            ConstantValue::Str(val) => write!(f, "{}", val.val),
             ConstantValue::Fun(fun) => write!(f, "<Function {}>", fun.name),
             ConstantValue::Nil => write!(f, "nil"),
         }
@@ -106,7 +107,7 @@ impl Not for ConstantValue {
 impl<'a> From<Literal> for ConstantValue {
     fn from(value: Literal) -> Self {
         match value {
-            Literal::Str(val) => ConstantValue::Str(val),
+            Literal::Str(val) => ConstantValue::Str(Hashed::new(val)),
             Literal::Num(val) => ConstantValue::Double(val),
             Literal::Bool(val) => ConstantValue::Bool(val),
             Literal::Nil => ConstantValue::Nil,

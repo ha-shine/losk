@@ -11,4 +11,5 @@ pub mod vm;
 
 mod limits;
 mod unsafe_ref;
+mod hashed;
 

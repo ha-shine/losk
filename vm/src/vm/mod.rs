@@ -1,13 +1,15 @@
-use ahash::RandomState;
 use intrusive_collections::LinkedList;
+use nohash::NoHashHasher;
 use std::collections::HashMap;
 use std::fmt;
+use std::hash::BuildHasherDefault;
 use std::io::Write;
 use std::ptr::null_mut;
 
 use native::clock;
 
 use crate::chunk::*;
+use crate::hashed::Hashed;
 use crate::limits::{
     GC_HEAP_GROW_FACTOR, VM_MAX_CALLFRAME_COUNT, VM_MAX_STACK_SIZE, VM_STACK_TRACE_LIMIT,
 };
@@ -57,7 +59,11 @@ pub struct VM<'a> {
     // or heap values. The expression after the var declaration statement is pushed onto the stack
     // so it makes sense to map to a `StackValue`. Care should be taken so that the GC scans this
     // table for reachability too.
-    globals: HashMap<&'static str, StackValue, RandomState>,
+    globals: HashMap<
+        Hashed<&'static str>,
+        StackValue,
+        BuildHasherDefault<NoHashHasher<Hashed<&'static str>>>,
+    >,
 
     // The VM will write the output strings into this stdout
     stdout: &'a mut dyn Write,
@@ -65,6 +71,9 @@ pub struct VM<'a> {
     // GC related fields
     bytes_allocated: usize,
     next_gc: usize,
+
+    // Cached initializers
+    init_string: Hashed<&'static str>,
 }
 
 // Be aware the VM will leak the function passed into to create a static reference to it and
@@ -84,6 +93,8 @@ impl<'a> VM<'a> {
             stdout,
             bytes_allocated: 0,
             next_gc: 1024 * 1024,
+
+            init_string: Hashed::new("init"),
         };
 
         vm.s_ptr = vm.stack.as_mut_ptr();
@@ -92,7 +103,7 @@ impl<'a> VM<'a> {
         )));
 
         let clock = vm.pop();
-        vm.globals.insert("clock", clock);
+        vm.globals.insert(Hashed::new("clock"), clock);
         vm
     }
 
@@ -195,10 +206,12 @@ impl<'a> VM<'a> {
                 Instruction::GetGlobal(constant) => {
                     let name = self.get_constant(constant);
 
-                    match self.globals.get(name) {
+                    match self.globals.get(&name) {
                         Some(sval) => self.push(*sval),
                         None => {
-                            return Err(self.error(format_args!("Undefined variable '{}'.", name)))
+                            return Err(
+                                self.error(format_args!("Undefined variable '{}'.", name.val))
+                            )
                         }
                     }
                 }
@@ -259,13 +272,13 @@ impl<'a> VM<'a> {
 
                     let field = self.get_constant(constant);
 
-                    match instance.fields.get(field) {
+                    match instance.fields.get(&field) {
                         Some(val) => {
                             self.push(*val);
                         }
                         None => {
                             let bound_method =
-                                self.bind_method(instance_slot, instance.class(), field)?;
+                                self.bind_method(instance_slot, instance.class(), &field)?;
                             self.allocate_and_push(HeapValue::BoundMethod(bound_method));
                         }
                     };
@@ -305,7 +318,7 @@ impl<'a> VM<'a> {
                     };
 
                     let instance = self.pop();
-                    let bound_method = self.bind_method(instance, superclass, name)?;
+                    let bound_method = self.bind_method(instance, superclass, &name)?;
                     self.allocate_and_push(HeapValue::BoundMethod(bound_method));
                 }
 
@@ -423,12 +436,9 @@ impl<'a> VM<'a> {
                     self.allocate_and_push(HeapValue::Class(cls));
                 }
 
-                Instruction::Method(Constant(idx)) => {
+                Instruction::Method(name) => {
                     let body = self.pop();
-                    let name = match self.current_frame().function().chunk.get_constant(idx) {
-                        Some(ConstantValue::Str(name)) => name,
-                        _ => panic!("Unreachable"),
-                    };
+                    let name = self.get_constant(name);
 
                     let class_slot = self.peek_stack(0);
                     let obj = match class_slot {
@@ -450,10 +460,7 @@ impl<'a> VM<'a> {
                 // before the `.` syntax. That is the receiver. In that case, I don't need to
                 // create a separate bound method but instead invoke the method from class directly.
                 Instruction::Invoke(Invoke { name, args }) => {
-                    let name = match self.current_frame().function().chunk.get_constant(name.0) {
-                        Some(ConstantValue::Str(name)) => name,
-                        _ => panic!("Unreachable"),
-                    };
+                    let name = self.get_constant(name);
 
                     let args = args.0;
                     let receiver = *self.peek_stack(args as isize);
@@ -466,14 +473,11 @@ impl<'a> VM<'a> {
                         _ => return Err(self.error(format_args!("Only instances have methods."))),
                     };
 
-                    self.invoke_from_class(instance.class(), instance, name, args)?;
+                    self.invoke_from_class(instance.class(), instance, &name, args)?;
                 }
 
                 Instruction::SuperInvoke(Invoke { name, args }) => {
-                    let name = match self.current_frame().function().chunk.get_constant(name.0) {
-                        Some(ConstantValue::Str(name)) => name,
-                        _ => panic!("Unreachable"),
-                    };
+                    let name = self.get_constant(name);
 
                     let superclass_slot = self.pop();
                     let superclass_obj = match superclass_slot {
@@ -496,7 +500,7 @@ impl<'a> VM<'a> {
                         _ => return Err(self.error(format_args!("Only instances have methods."))),
                     };
 
-                    self.invoke_from_class(superclass, instance, name, args)?;
+                    self.invoke_from_class(superclass, instance, &name, args)?;
                 }
 
                 Instruction::Inherit => {
@@ -517,7 +521,7 @@ impl<'a> VM<'a> {
 
                     sub_cls
                         .methods
-                        .extend(sup_cls.methods.iter().map(|(k, v)| (*k, *v)));
+                        .extend(sup_cls.methods.iter().map(|(k, v)| (k.clone(), *v)));
 
                     // Pop the subclass
                     self.pop();
@@ -526,14 +530,18 @@ impl<'a> VM<'a> {
         }
     }
 
-    fn get_constant(&mut self, constant: Constant) -> &'static str {
+    fn get_constant(&mut self, constant: Constant) -> Hashed<&'static str> {
         match self
             .current_frame()
             .function()
             .chunk
             .get_constant(constant.0)
         {
-            Some(ConstantValue::Str(name)) => name,
+            // Surely, there's a better way to do this
+            Some(ConstantValue::Str(name)) => Hashed {
+                val: &name.val,
+                hash: name.hash,
+            },
             _ => panic!("Unreachable"),
         }
     }
@@ -551,12 +559,12 @@ impl<'a> VM<'a> {
         let val = *self.peek_stack(0);
         let name = self.get_constant(constant);
 
-        match self.globals.get_mut(name) {
+        match self.globals.get_mut(&name) {
             Some(entry) => {
                 *entry = val;
                 Ok(())
             }
-            None => Err(self.error(format_args!("Undefined variable '{}'.", name))),
+            None => Err(self.error(format_args!("Undefined variable '{}'.", name.val))),
         }
     }
 
@@ -624,7 +632,7 @@ impl<'a> VM<'a> {
 
                 HeapValue::Class(cls) => {
                     let instance = Instance::new(UnsafeRef::clone(&obj));
-                    let initializer = cls.methods.get("init").cloned();
+                    let initializer = cls.methods.get(&self.init_string).cloned();
                     self.allocate_and_push(HeapValue::Instance(instance));
 
                     // The function is at -count position, replace that with the instance
@@ -686,7 +694,7 @@ impl<'a> VM<'a> {
         &mut self,
         class: &Class,
         instance: &Instance,
-        name: &str,
+        name: &Hashed<&'static str>,
         args: usize,
     ) -> VmResult<()> {
         // Wait, instance is no longer reachable from stack here. Because the instance's field is
@@ -699,7 +707,7 @@ impl<'a> VM<'a> {
 
         match class.methods.get(name).cloned() {
             Some(method) => self.execute_call(method, args),
-            None => Err(self.error(format_args!("Undefined property {}.", name))),
+            None => Err(self.error(format_args!("Undefined property {}.", name.val))),
         }
     }
 
@@ -805,7 +813,7 @@ impl<'a> VM<'a> {
         match ConstantValue::from(value) {
             ConstantValue::Double(val) => self.push(StackValue::Num(val)),
             ConstantValue::Bool(val) => self.push(StackValue::Bool(val)),
-            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::Str(val)),
+            ConstantValue::Str(val) => self.allocate_and_push(HeapValue::Str(val.val.clone())),
             ConstantValue::Nil => self.push(StackValue::Nil),
             ConstantValue::Fun(_) => {
                 return Err(self.error(format_args!("Invalid return value from native function")))
@@ -913,11 +921,11 @@ impl<'a> VM<'a> {
         &self,
         instance: StackValue,
         class: &Class,
-        name: &str,
+        name: &Hashed<&'static str>,
     ) -> VmResult<BoundMethod> {
         let method = match class.methods.get(name) {
             Some(method) => *method,
-            None => return Err(self.error(format_args!("Undefined property '{}'.", name))),
+            None => return Err(self.error(format_args!("Undefined property '{}'.", name.val))),
         };
 
         if let StackValue::Obj(obj) = method {
